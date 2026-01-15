@@ -1,3 +1,16 @@
+<!--
+============================================================================
+⚠️  PUBLIC FILE - Part of botchat-oss transparency repo
+============================================================================
+This file is publicly visible at: https://github.com/LeoooDias/botchat-oss
+
+Purpose: Demonstrate localStorage-only message storage (no server persistence)
+
+⚠️  DO NOT add proprietary business logic here
+⚠️  Only message handling transparency code belongs in this file
+============================================================================
+-->
+
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { Marked } from 'marked';

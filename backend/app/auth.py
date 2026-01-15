@@ -1,3 +1,14 @@
+# ============================================================================
+# ⚠️  PUBLIC FILE - Part of botchat-oss transparency repo
+# ============================================================================
+# This file is publicly visible at: https://github.com/LeoooDias/botchat-oss
+#
+# Purpose: Demonstrate privacy-first authentication (no PII storage)
+#
+# ⚠️  DO NOT add proprietary business logic here
+# ⚠️  Only privacy/security transparency code belongs in this file
+# ============================================================================
+
 """Authentication module for botchat.
 
 Handles OAuth token validation and JWT generation/verification.

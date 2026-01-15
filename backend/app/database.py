@@ -1,3 +1,14 @@
+# ============================================================================
+# ⚠️  PUBLIC FILE - Part of botchat-oss transparency repo
+# ============================================================================
+# This file is publicly visible at: https://github.com/LeoooDias/botchat-oss
+#
+# Purpose: Demonstrate privacy-first data schema (what we store/don't store)
+#
+# ⚠️  DO NOT add proprietary business logic here
+# ⚠️  Only data schema transparency code belongs in this file
+# ============================================================================
+
 """Database module for botchat.
 
 Handles PostgreSQL connection and user/subscription storage.

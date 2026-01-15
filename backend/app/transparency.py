@@ -1,3 +1,14 @@
+# ============================================================================
+# ⚠️  PUBLIC FILE - Part of botchat-oss transparency repo
+# ============================================================================
+# This file is publicly visible at: https://github.com/LeoooDias/botchat-oss
+#
+# Purpose: Public /transparency endpoint for data auditability
+#
+# ⚠️  DO NOT add proprietary business logic here
+# ⚠️  Only transparency endpoint code belongs in this file
+# ============================================================================
+
 """Transparency module for botchat.
 
 Provides a public, read-only view of the database with masked data.

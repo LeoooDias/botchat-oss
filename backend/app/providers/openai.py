@@ -1,3 +1,14 @@
+# ============================================================================
+# ⚠️  PUBLIC FILE - Part of botchat-oss transparency repo
+# ============================================================================
+# This file is publicly visible at: https://github.com/LeoooDias/botchat-oss
+#
+# Purpose: Demonstrate OpenAI API privacy flags (no training opt-out)
+#
+# ⚠️  DO NOT add proprietary business logic here
+# ⚠️  Only provider integration transparency code belongs in this file
+# ============================================================================
+
 """
 OpenAI provider implementation for botchat.
 
