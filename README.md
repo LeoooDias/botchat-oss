@@ -26,8 +26,10 @@ This repository contains the core transparency code for botchat, enabling public
 
 ## Purpose
 
-This code is provided for transparency and auditability. The full application is developed in a private repository to protect intellectual property while maintaining accountability for our privacy commitments.
+This code is provided for transparency and auditability.
 
 ## License
 
 Business Source License (BSL) - See LICENSE file
+
+(c) 2026 - ClearWorks Foundry Inc
