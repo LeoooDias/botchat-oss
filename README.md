@@ -24,10 +24,6 @@ This repository contains the core transparency code for botchat, enabling public
   - Client-side message rendering
   - localStorage-only storage (no server persistence)
 
-## Purpose
-
-This code is provided for transparency and auditability.
-
 ## License
 
 Business Source License (BSL) - See LICENSE file
