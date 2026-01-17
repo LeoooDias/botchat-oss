@@ -1282,3 +1282,167 @@ async def upgrade_to_permanent_ban(provider: str, oauth_id: str, admin_notes: st
             provider, oauth_id, admin_notes
         )
         return dict(row) if row else None
+
+
+# =============================================================================
+# Magic Link Functions (Email Authentication)
+# =============================================================================
+
+async def create_magic_link(
+    email_hash: str,
+    token_hash: str,
+    expires_at: datetime,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> int:
+    """Create a new magic link token.
+
+    Args:
+        email_hash: Hashed email address
+        token_hash: Hashed token
+        expires_at: Expiration timestamp (typically NOW() + 1 hour)
+        ip_address: Request IP for rate limiting
+        user_agent: User agent for abuse detection
+        user_id: User ID if already registered (NULL for new signups)
+
+    Returns:
+        Magic link ID
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO magic_links (
+                email_hash, token_hash, expires_at,
+                ip_address, user_agent, user_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+            """,
+            email_hash, token_hash, expires_at,
+            ip_address, user_agent, user_id
+        )
+        return row["id"]
+
+
+async def get_magic_link_by_token(token_hash: str) -> Optional[dict]:
+    """Get magic link by token hash.
+
+    Returns None if token not found, expired, or already used.
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, email_hash, user_id, created_at, expires_at, used_at
+            FROM magic_links
+            WHERE token_hash = $1
+            AND used_at IS NULL
+            AND expires_at > NOW()
+            """,
+            token_hash
+        )
+
+        if row:
+            return dict(row)
+        return None
+
+
+async def mark_magic_link_used(token_hash: str) -> bool:
+    """Mark magic link as used (one-time use).
+
+    Returns True if successfully marked, False if token was invalid/expired/already used.
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE magic_links
+            SET used_at = NOW()
+            WHERE token_hash = $1
+            AND used_at IS NULL
+            AND expires_at > NOW()
+            """,
+            token_hash
+        )
+
+        # Check if any rows were updated
+        return result.split()[-1] == "1"
+
+
+async def count_recent_magic_links(email_hash: str, minutes: int = 60) -> int:
+    """Count magic links sent to this email in the last N minutes.
+
+    Used for rate limiting to prevent abuse.
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT COUNT(*) as count
+            FROM magic_links
+            WHERE email_hash = $1
+            AND created_at > NOW() - make_interval(mins => $2)
+            """,
+            email_hash, minutes
+        )
+        return row["count"] if row else 0
+
+
+async def cleanup_expired_magic_links() -> int:
+    """Delete expired magic links (housekeeping).
+
+    Should be called periodically (e.g., daily cron job).
+    Returns number of deleted rows.
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM magic_links
+            WHERE expires_at < NOW() - INTERVAL '24 hours'
+            """
+        )
+        count = int(result.split()[-1])
+        if count > 0:
+            logger.info("Cleaned up %d expired magic links", count)
+        return count
+
+
+async def get_user_by_email_hash(email_hash: str) -> Optional[dict]:
+    """Get user by hashed email (for email provider).
+
+    Returns None if user doesn't exist.
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, oauth_provider, oauth_id, stripe_customer_id,
+                   subscription_status, subscription_id, subscription_ends_at,
+                   message_quota_used, quota_period_start,
+                   total_messages, recovery_email_hash, recovery_email_set_at,
+                   created_at, updated_at, account_status
+            FROM users
+            WHERE oauth_provider = 'email'
+            AND oauth_id = $1
+            """,
+            email_hash
+        )
+
+        if row:
+            return dict(row)
+        return None

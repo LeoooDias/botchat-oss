@@ -129,6 +129,11 @@ def _get_pepper(secret_name: str, env_var: str) -> str:
 # Loaded from GCP Secret Manager (oauth-hash-salt) or OAUTH_HASH_SALT env var
 OAUTH_HASH_SALT = _get_pepper("oauth-hash-salt", "OAUTH_HASH_SALT")
 
+# Email hash salt (separate from OAuth salt for defense in depth)
+# Used for magic link email authentication
+# Loaded from GCP Secret Manager (email-hash-salt) or EMAIL_HASH_SALT env var
+EMAIL_HASH_SALT = _get_pepper("email-hash-salt", "EMAIL_HASH_SALT")
+
 # Email allowlist - comma-separated list of allowed OAuth IDs (empty = allow all)
 # Used to restrict access in dev environments
 # NOTE: These should be hashed OAuth IDs, not emails
@@ -161,6 +166,55 @@ def hash_oauth_id(provider: str, oauth_id: str) -> str:
     
     # Create a secure hash: SHA-256(salt:provider:oauth_id)
     data = f"{OAUTH_HASH_SALT}:{provider}:{oauth_id}".encode('utf-8')
+    return hashlib.sha256(data).hexdigest()
+
+
+def hash_email(email: str) -> str:
+    """Hash an email address for privacy-first storage.
+
+    SECURITY PROPERTIES:
+    - Deterministic: same email = same hash (required for lookups)
+    - Irreversible: cannot recover original email from hash
+    - App-specific: different apps using same email get different hashes
+    - Normalized: case-insensitive, whitespace-trimmed
+
+    The salt (EMAIL_HASH_SALT) acts as an "app-level pepper" separate from
+    OAuth salt for defense in depth.
+
+    CRITICAL: The salt MUST be kept secret and NEVER changed.
+    Changing it will orphan all existing email user accounts.
+    """
+    if not EMAIL_HASH_SALT:
+        # In development without salt, use raw email (not for production!)
+        logger.warning("EMAIL_HASH_SALT not set - using raw emails (insecure)")
+        return f"email:{email.lower()}"
+
+    # Normalize: lowercase, strip whitespace
+    normalized = email.strip().lower()
+
+    # Validate basic format
+    if "@" not in normalized or "." not in normalized.split("@")[1]:
+        raise ValueError("Invalid email format")
+
+    # Create a secure hash: SHA-256(salt:email:normalized_email)
+    data = f"{EMAIL_HASH_SALT}:email:{normalized}".encode('utf-8')
+    return hashlib.sha256(data).hexdigest()
+
+
+def hash_magic_link_token(token: str) -> str:
+    """Hash a magic link token for secure database storage.
+
+    SECURITY: Tokens are hashed before storage so that database compromise
+    doesn't expose valid tokens. Uses the same salt as email hashing.
+
+    Note: Tokens are single-use and short-lived (1 hour), so hashing provides
+    defense-in-depth rather than being strictly necessary.
+    """
+    if not EMAIL_HASH_SALT:
+        logger.warning("EMAIL_HASH_SALT not set - storing raw tokens (insecure)")
+        return token
+
+    data = f"{EMAIL_HASH_SALT}:token:{token}".encode('utf-8')
     return hashlib.sha256(data).hexdigest()
 
 
@@ -224,6 +278,23 @@ class AuthResponse(BaseModel):
     token: str
     user: dict[str, Any]
     expires_at: int
+
+
+class MagicLinkRequest(BaseModel):
+    """Request a magic link to be sent to email."""
+    email: str
+
+
+class MagicLinkVerifyRequest(BaseModel):
+    """Verify a magic link token."""
+    token: str
+
+
+class MagicLinkResponse(BaseModel):
+    """Response after requesting magic link."""
+    success: bool
+    message: str
+    # PRIVACY: Never reveal if email exists or not (timing attack protection)
 
 
 # -----------------------------
