@@ -308,6 +308,19 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 						</button>
 					</div>
 				{/if}
+
+		<!-- Export button for bot messages (not error messages) -->
+		{#if msg.role === 'assistant' && !msg.isError && msg.botId}
+			<button
+				on:click={() => dispatch('export', { message: msg })}
+				class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-400 dark:hover:border-blue-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+				title="Export this message"
+			>
+				<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+				</svg>
+			</button>
+		{/if}
 				
 				<!-- Reply button for bot messages (not error messages) -->
 			{#if msg.role === 'assistant' && !msg.isError && msg.botId}
