@@ -310,17 +310,17 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 				{/if}
 				
 				<!-- Reply button for bot messages (not error messages) -->
-				{#if msg.role === 'assistant' && !msg.isError && msg.botId}
-					<button
-						on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
-						class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-400 dark:hover:border-blue-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
-						title="Reply to this bot only"
-					>
-						<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
-						</svg>
-					</button>
-				{/if}
+			{#if msg.role === 'assistant' && !msg.isError && msg.botId}
+				<button
+					on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
+					class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-400 dark:hover:border-blue-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+					title="Reply to this bot only"
+				>
+					<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+					</svg>
+				</button>
+			{/if}
 			</div>
 		</div>
 	{/each}
