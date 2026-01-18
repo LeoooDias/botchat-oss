@@ -173,7 +173,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	function getBotLabel(botId?: string): string {
 		if (!botId) return 'Assistant';
 		const bot = activeBots.find((b) => b.id === botId);
-		return bot ? `${bot.provider} • ${bot.model}` : 'Unknown';
+		return bot ? bot.provider : 'Unknown';
 	}
 
 	function openCitations(citations: Citation[]) {
