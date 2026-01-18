@@ -353,6 +353,24 @@ async def _create_tables():
             END $$;
         """)
         
+        # V3.0.0: SUBSCRIPTION TIER: Add subscription_tier column to users table
+        # Tracks: NULL (free), 'pro' ($9/month), 'plus' ($19/month)
+        # Existing paid users are grandfathered as 'plus'
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'subscription_tier'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(10) DEFAULT NULL;
+                    -- Grandfather existing paid users as 'plus'
+                    UPDATE users SET subscription_tier = 'plus' 
+                    WHERE subscription_status IN ('active', 'trialing');
+                END IF;
+            END $$;
+        """)
+        
         # STRIKES TABLE: Tracks abuse incidents for admin review
         # Each strike auto-suspends the account pending admin decision
         await conn.execute("""
@@ -479,6 +497,7 @@ async def get_user_by_oauth(provider: str, oauth_id: str) -> Optional[dict]:
             """
             SELECT id, oauth_provider, oauth_id, stripe_customer_id,
                    subscription_status, subscription_id, subscription_ends_at,
+                   subscription_tier,
                    message_quota_used, quota_period_start,
                    total_messages, recovery_email_hash, recovery_email_set_at,
                    account_status,
@@ -501,6 +520,7 @@ async def get_user_by_stripe_customer(customer_id: str) -> Optional[dict]:
             """
             SELECT id, oauth_provider, oauth_id, stripe_customer_id,
                    subscription_status, subscription_id, subscription_ends_at,
+                   subscription_tier,
                    message_quota_used, quota_period_start,
                    total_messages, recovery_email_hash, recovery_email_set_at,
                    created_at, updated_at
@@ -657,7 +677,8 @@ async def update_subscription_status(
     stripe_customer_id: str,
     status: str,
     subscription_id: Optional[str] = None,
-    ends_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None,
+    tier: Optional[str] = None  # V3.0.0: 'pro' | 'plus' | None
 ) -> Optional[dict]:
     """Update user's subscription status by Stripe customer ID."""
     if not _pool:
@@ -670,13 +691,15 @@ async def update_subscription_status(
             SET subscription_status = $2,
                 subscription_id = $3,
                 subscription_ends_at = $4,
+                subscription_tier = $5,
                 updated_at = NOW()
             WHERE stripe_customer_id = $1
             RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                       subscription_status, subscription_id, subscription_ends_at,
+                      subscription_tier,
                       created_at, updated_at
             """,
-            stripe_customer_id, status, subscription_id, ends_at
+            stripe_customer_id, status, subscription_id, ends_at, tier
         )
         return dict(row) if row else None
 
@@ -687,6 +710,7 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
     Returns a dict with:
     - status: 'none' | 'trialing' | 'active' | 'canceled' | 'past_due'
     - is_subscribed: bool (true if trialing or active)
+    - tier: 'pro' | 'plus' | null (V3.0.0)
     - ends_at: Optional datetime
     
     Users are identified by {provider}:{oauth_id}. Email parameter is ignored.
@@ -697,20 +721,24 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
         return {
             "status": "none",
             "is_subscribed": False,
+            "tier": None,
             "ends_at": None,
         }
     
     status = user.get("subscription_status", "none")
     is_subscribed = status in ("trialing", "active")
+    tier = user.get("subscription_tier")  # 'pro', 'plus', or None
     
     # Check if subscription has ended
     ends_at = user.get("subscription_ends_at")
     if ends_at and datetime.now() > ends_at:
         is_subscribed = False
+        tier = None  # No tier if subscription ended
     
     return {
         "status": status,
         "is_subscribed": is_subscribed,
+        "tier": tier if is_subscribed else None,  # Only return tier if subscribed
         "ends_at": ends_at.isoformat() if ends_at else None,
     }
 
