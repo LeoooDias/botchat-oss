@@ -31,8 +31,10 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		content: string;
 		timestamp: number;
 		botId?: string;
+		botName?: string; // Persisted bot name for display after refresh
 		provider?: string;
 		model?: string;
+		mode?: 'chat' | 'ask' | 'study'; // v3.0.0: Mode used for this response
 		isError?: boolean;
 		isTruncated?: boolean; // Response was cut off due to max_tokens limit
 		finishReason?: string; // Raw finish_reason from provider
@@ -164,16 +166,29 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		}
 	}
 
-	function getBotName(botId?: string): string | null {
-		if (!botId) return null;
-		const bot = activeBots.find((b) => b.id === botId);
-		return bot?.name || null;
+	function getBotName(msg: Message): string | null {
+		if (!msg.botId) return null;
+		// First try to find in active bots, then fall back to stored botName
+		const bot = activeBots.find((b) => b.id === msg.botId);
+		return bot?.name || msg.botName || null;
 	}
 
-	function getBotLabel(botId?: string): string {
-		if (!botId) return 'Assistant';
-		const bot = activeBots.find((b) => b.id === botId);
-		return bot ? bot.provider : 'Unknown';
+	function getBotLabel(msg: Message): string {
+		if (!msg.botId) return 'Assistant';
+		// First try to find in active bots, then fall back to stored provider
+		const bot = activeBots.find((b) => b.id === msg.botId);
+		const provider = bot?.provider || msg.provider;
+		return provider ? formatProviderName(provider) : 'Assistant';
+	}
+
+	function getModeLabel(mode?: string): { label: string; color: string } | null {
+		if (!mode) return null;
+		switch (mode) {
+			case 'chat': return { label: 'Chat', color: 'text-green-600 dark:text-green-400' };
+			case 'ask': return { label: 'Ask', color: 'text-gray-500 dark:text-gray-400' };
+			case 'study': return { label: 'Study', color: 'text-blue-600 dark:text-blue-400' };
+			default: return null;
+		}
 	}
 
 	function openCitations(citations: Citation[]) {
@@ -255,10 +270,16 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					}`}
 				>
 					{#if msg.role === 'assistant'}
-						{#if getBotName(msg.botId)}
-							<div class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-0.5">{getBotName(msg.botId)}</div>
+						{#if getBotName(msg)}
+							<div class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-0.5">{getBotName(msg)}</div>
 						{/if}
-						<div class="text-[10px] md:text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1.5 md:mb-2">{getBotLabel(msg.botId)}</div>
+						<div class="flex items-center gap-2 mb-1.5 md:mb-2">
+							<span class="text-[10px] md:text-xs font-semibold text-gray-600 dark:text-gray-400">{getBotLabel(msg)}</span>
+							{#if getModeLabel(msg.mode)}
+								{@const modeInfo = getModeLabel(msg.mode)}
+								<span class="text-[9px] md:text-[10px] font-medium {modeInfo?.color}">• {modeInfo?.label}</span>
+							{/if}
+						</div>
 						<div class="prose prose-sm max-w-none dark:prose-invert text-sm leading-relaxed prose-p:m-0 prose-p:mb-2 prose-headings:mt-3 prose-headings:mb-2 prose-h1:text-base prose-h2:text-sm prose-h3:text-sm prose-ul:m-0 prose-ul:mb-2 prose-ul:pl-4 prose-li:m-0 prose-ol:m-0 prose-ol:mb-2 prose-ol:pl-4 prose-blockquote:border-l-4 prose-blockquote:border-gray-400 dark:prose-blockquote:border-gray-500 prose-blockquote:pl-3 prose-blockquote:italic prose-blockquote:m-0 prose-blockquote:mb-2 prose-code:bg-gray-200 dark:prose-code:bg-gray-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-code:text-xs prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline hover:prose-a:text-blue-800 dark:hover:prose-a:text-blue-300 prose-strong:font-bold prose-em:italic">
 							{#await renderMarkdown(msg.content)}
 								<p>Loading...</p>
