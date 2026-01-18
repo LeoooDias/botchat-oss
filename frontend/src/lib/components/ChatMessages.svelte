@@ -20,7 +20,10 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	import type { Citation } from './CitationsPopup.svelte';
 	import { formatProviderName } from '$lib/utils/format';
 
-	const dispatch = createEventDispatcher<{ reply: { messageId: string; botId: string } }>();
+	const dispatch = createEventDispatcher<{ 
+		reply: { messageId: string; botId: string };
+		export: { message: Message };
+	}>();
 
 	interface Message {
 		id: string;
@@ -43,7 +46,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	interface Bot {
 		id: string;
 		provider: string;
-		model: string;
+		model?: string;
 		name?: string;
 		webSearchEnabled?: boolean;
 	}
