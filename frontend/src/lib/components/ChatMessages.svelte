@@ -168,16 +168,18 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 
 	function getBotName(msg: Message): string | null {
 		if (!msg.botId) return null;
-		// First try to find in active bots, then fall back to stored botName
+		// Prefer stored botName (immutable history) over current bot state
+		// Fall back to current bot only for old messages without stored botName
+		if (msg.botName) return msg.botName;
 		const bot = activeBots.find((b) => b.id === msg.botId);
-		return bot?.name || msg.botName || null;
+		return bot?.name || null;
 	}
 
 	function getBotLabel(msg: Message): string {
 		if (!msg.botId) return 'Assistant';
-		// First try to find in active bots, then fall back to stored provider
-		const bot = activeBots.find((b) => b.id === msg.botId);
-		const provider = bot?.provider || msg.provider;
+		// Prefer stored provider (immutable history) over current bot state
+		// Fall back to current bot only for old messages without stored provider
+		const provider = msg.provider || activeBots.find((b) => b.id === msg.botId)?.provider;
 		return provider ? formatProviderName(provider) : 'Assistant';
 	}
 
