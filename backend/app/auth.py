@@ -697,6 +697,18 @@ async def require_auth(user: Optional[UserInfo] = Depends(get_current_user)) -> 
     return user
 
 
+async def get_optional_user(user: Optional[UserInfo] = Depends(get_current_user)) -> Optional[UserInfo]:
+    """Get authenticated user if available, None otherwise (use as dependency).
+    
+    Use this for endpoints that work for both authenticated and anonymous users.
+    When REQUIRE_AUTH=false, returns a dummy user for development.
+    """
+    if not REQUIRE_AUTH:
+        return UserInfo(provider="dev", user_id="dev-user-hashed")
+    
+    return user
+
+
 # -----------------------------
 # OAuth URL Builders
 # PRIVACY: Minimal scopes - we only need user ID for authentication

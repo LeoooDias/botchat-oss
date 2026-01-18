@@ -458,6 +458,26 @@ async def _create_tables():
                 ON bug_reports(created_at DESC);
         """)
         
+        # ANONYMOUS USAGE TABLE: Rate limiting for unauthenticated users
+        # PRIVACY: Only stores hashed identity (IP + User-Agent hash)
+        # Automatically cleaned up when user authenticates
+        # Used for abuse prevention on expensive endpoints (persona generation)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS anonymous_usage (
+                id SERIAL PRIMARY KEY,
+                identity_hash VARCHAR(64) NOT NULL,
+                action_type VARCHAR(50) NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_anonymous_usage_identity 
+                ON anonymous_usage(identity_hash);
+            CREATE INDEX IF NOT EXISTS idx_anonymous_usage_action 
+                ON anonymous_usage(identity_hash, action_type);
+            CREATE INDEX IF NOT EXISTS idx_anonymous_usage_created 
+                ON anonymous_usage(created_at);
+        """)
+        
         logger.info("Database tables and views created/verified")
 
 
