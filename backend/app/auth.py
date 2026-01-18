@@ -667,14 +667,21 @@ async def get_current_user(
 ) -> Optional[UserInfo]:
     """Extract and verify user from Authorization header.
     
-    Returns None if auth is disabled or no token provided.
-    Raises HTTPException if auth is required and token is invalid.
+    Returns None if:
+    - Auth is disabled (REQUIRE_AUTH=false)
+    - No Authorization header provided
+    
+    Raises HTTPException if token is provided but invalid.
+    
+    Note: This function does NOT require auth - it just extracts the user if present.
+    Use require_auth() dependency if auth is mandatory, or get_optional_user() if optional.
     """
     if not REQUIRE_AUTH:
         return None
     
     if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization header required")
+        # No auth header - return None (let downstream decide if auth is required)
+        return None
     
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization format")
