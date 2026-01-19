@@ -271,6 +271,7 @@ class OAuthCallbackRequest(BaseModel):
     provider: str  # "github", "google", "apple", or "microsoft"
     redirect_uri: str
     id_token: Optional[str] = None  # Apple sends id_token via POST
+    anonymous_fingerprint: Optional[str] = None  # v3.0.1: For merging anonymous usage
 
 
 class AuthResponse(BaseModel):

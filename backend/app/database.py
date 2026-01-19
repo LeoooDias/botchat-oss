@@ -363,9 +363,66 @@ async def _create_tables():
         
         # Grandfather existing paid users as 'plus' (only if not already set)
         await conn.execute("""
-            UPDATE users SET subscription_tier = 'plus' 
+            UPDATE users SET subscription_tier = 'plus'
             WHERE subscription_status IN ('active', 'trialing')
             AND subscription_tier IS NULL;
+        """)
+
+        # V3.0.1: ANONYMOUS USER TRACKING: Server-side quota enforcement
+        # Add columns to track anonymous users before they sign in
+        # PRIVACY: anonymous_fingerprint is a SHA-256 hash generated client-side
+        # We cannot reverse it to identify the user
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'users' AND column_name = 'is_anonymous'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN is_anonymous BOOLEAN DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'users' AND column_name = 'anonymous_fingerprint'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN anonymous_fingerprint VARCHAR(64);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'users' AND column_name = 'promoted_at'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN promoted_at TIMESTAMP;
+                END IF;
+            END $$;
+        """)
+
+        # Index for fast anonymous user lookups
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_anonymous_fingerprint
+                ON users(anonymous_fingerprint)
+                WHERE anonymous_fingerprint IS NOT NULL;
+        """)
+
+        # V3.0.1: Auto-clear fingerprints after 72 hours for privacy
+        # This prevents indefinite fingerprint storage while still preventing immediate abuse
+        await conn.execute("""
+            CREATE OR REPLACE FUNCTION clear_old_fingerprints() RETURNS void AS $$
+            BEGIN
+                UPDATE users
+                SET anonymous_fingerprint = NULL
+                WHERE anonymous_fingerprint IS NOT NULL
+                  AND is_anonymous = FALSE
+                  AND promoted_at IS NOT NULL
+                  AND promoted_at < NOW() - INTERVAL '72 hours';
+            END;
+            $$ LANGUAGE plpgsql;
+        """)
+
+        # Create index for efficient fingerprint cleanup
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_fingerprint_cleanup
+                ON users(promoted_at)
+                WHERE anonymous_fingerprint IS NOT NULL AND is_anonymous = FALSE;
         """)
         
         # STRIKES TABLE: Tracks abuse incidents for admin review
@@ -666,6 +723,144 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None)
         return dict(row)
 
 
+async def get_or_create_anonymous_user(fingerprint: str) -> dict:
+    """Get or create an anonymous user by browser fingerprint hash.
+
+    V3.0.1: Server-side quota enforcement for anonymous users.
+
+    PRIVACY: fingerprint is a client-generated SHA-256 hash.
+    We cannot reverse it to identify the user.
+
+    ABUSE PREVENTION: Checks for promoted users (signed in then signed out)
+    to prevent gaming the system by signing out and using anonymous mode again.
+    Fingerprints are auto-cleared after 72 hours for privacy.
+
+    Args:
+        fingerprint: SHA-256 hash of browser signals (64-char hex string)
+
+    Returns:
+        User dict (may be is_anonymous=TRUE or is_anonymous=FALSE if promoted)
+    """
+    if not _pool:
+        raise Exception("Database pool not initialized")
+
+    async with _pool.acquire() as conn:
+        # Periodically clean up old fingerprints (72+ hours after promotion)
+        # This runs async and doesn't block the request
+        try:
+            await conn.execute("SELECT clear_old_fingerprints()")
+        except Exception as e:
+            logger.warning(f"Failed to clear old fingerprints: {e}")
+
+        # Try to find existing user by fingerprint (anonymous OR promoted)
+        # This prevents gaming: anonymous → sign in → sign out → use anonymous again
+        row = await conn.fetchrow(
+            """
+            SELECT id, oauth_provider, oauth_id, message_quota_used,
+                   quota_period_start, is_anonymous, anonymous_fingerprint,
+                   subscription_status, subscription_tier, total_messages,
+                   created_at, updated_at, account_status
+            FROM users
+            WHERE anonymous_fingerprint = $1
+            """,
+            fingerprint
+        )
+
+        if row:
+            # Found existing user (either still anonymous or promoted to authenticated)
+            return dict(row)
+
+        # Create new anonymous user
+        row = await conn.fetchrow(
+            """
+            INSERT INTO users (
+                oauth_provider,
+                oauth_id,
+                is_anonymous,
+                anonymous_fingerprint,
+                message_quota_used,
+                total_messages
+            )
+            VALUES ('anonymous', $1, TRUE, $1, 0, 0)
+            RETURNING id, oauth_provider, oauth_id, message_quota_used,
+                      quota_period_start, is_anonymous, anonymous_fingerprint,
+                      subscription_status, subscription_tier, total_messages,
+                      created_at, updated_at, account_status
+            """,
+            fingerprint
+        )
+
+        logger.info(f"Created anonymous user: fingerprint={fingerprint[:16]}... (db_id={row['id']})")
+        return dict(row)
+
+
+async def promote_anonymous_to_authenticated(
+    fingerprint: str,
+    provider: str,
+    oauth_id: str
+) -> dict:
+    """Promote anonymous user to authenticated user on sign-in.
+
+    V3.0.1: Merge anonymous usage into authenticated account.
+
+    - Updates existing anonymous user record with OAuth info
+    - Preserves message quota usage (carries over to authenticated account)
+    - KEEPS anonymous_fingerprint (prevents gaming: sign out → use anonymous mode again)
+    - OR creates new authenticated user if no anonymous record exists
+
+    Args:
+        fingerprint: Anonymous user's browser fingerprint
+        provider: OAuth provider (github, google, etc.)
+        oauth_id: Hashed OAuth ID
+
+    Returns:
+        Updated or newly created user dict
+    """
+    if not _pool:
+        raise Exception("Database pool not initialized")
+
+    async with _pool.acquire() as conn:
+        # Find anonymous user by fingerprint
+        anon_user = await conn.fetchrow(
+            """
+            SELECT * FROM users
+            WHERE anonymous_fingerprint = $1 AND is_anonymous = TRUE
+            """,
+            fingerprint
+        )
+
+        if anon_user:
+            # Update existing anonymous user to authenticated
+            # KEEP the fingerprint - prevents gaming by signing out and using anonymous mode
+            row = await conn.fetchrow(
+                """
+                UPDATE users
+                SET oauth_provider = $1,
+                    oauth_id = $2,
+                    is_anonymous = FALSE,
+                    promoted_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = $3
+                RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
+                          subscription_status, subscription_id, subscription_ends_at,
+                          message_quota_used, quota_period_start,
+                          total_messages, recovery_email_hash, recovery_email_set_at,
+                          created_at, updated_at, account_status, subscription_tier,
+                          is_anonymous, promoted_at
+                """,
+                provider, oauth_id, anon_user['id']
+            )
+            logger.info(
+                f"Promoted anonymous user {anon_user['id']} to {provider}:{oauth_id[:16]}... "
+                f"(carried over {anon_user['message_quota_used']} messages, kept fingerprint)"
+            )
+            return dict(row)
+        else:
+            # No anonymous record - create new authenticated user normally
+            logger.info(f"No anonymous user found for fingerprint, creating new: {provider}:{oauth_id[:16]}...")
+            return await create_user(provider, oauth_id)
+
+
 async def update_user_stripe_customer(
     provider: str, 
     oauth_id: str, 
@@ -765,10 +960,11 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
 # -----------------------------
 
 # Quota limits (v3.0.0 - tier-based)
-FREE_TIER_QUOTA = 100   # messages per month for free signed-in users
-PRO_TIER_QUOTA = 1000   # messages per month for Pro subscribers ($8/month)
-PLUS_TIER_QUOTA = 2000  # messages per month for Plus subscribers ($19/month)
-QUOTA_PERIOD_DAYS = 30  # rolling period for free users
+FREE_SIGNED_OUT_QUOTA = 20    # messages total for anonymous users (v3.0.1)
+FREE_TIER_QUOTA = 100         # messages per month for free signed-in users
+PRO_TIER_QUOTA = 1000         # messages per month for Pro subscribers ($8/month)
+PLUS_TIER_QUOTA = 2000        # messages per month for Plus subscribers ($19/month)
+QUOTA_PERIOD_DAYS = 30        # rolling period for free users
 
 
 def get_quota_limit_for_tier(tier: Optional[str], is_paid: bool) -> int:
