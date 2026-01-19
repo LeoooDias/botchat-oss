@@ -356,19 +356,16 @@ async def _create_tables():
         # V3.0.0: SUBSCRIPTION TIER: Add subscription_tier column to users table
         # Tracks: NULL (free), 'pro' ($9/month), 'plus' ($19/month)
         # Existing paid users are grandfathered as 'plus'
+        # NOTE: Using ADD COLUMN IF NOT EXISTS for reliability across environments
         await conn.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'subscription_tier'
-                ) THEN
-                    ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(10) DEFAULT NULL;
-                    -- Grandfather existing paid users as 'plus'
-                    UPDATE users SET subscription_tier = 'plus' 
-                    WHERE subscription_status IN ('active', 'trialing');
-                END IF;
-            END $$;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(10) DEFAULT NULL;
+        """)
+        
+        # Grandfather existing paid users as 'plus' (only if not already set)
+        await conn.execute("""
+            UPDATE users SET subscription_tier = 'plus' 
+            WHERE subscription_status IN ('active', 'trialing')
+            AND subscription_tier IS NULL;
         """)
         
         # STRIKES TABLE: Tracks abuse incidents for admin review
