@@ -764,10 +764,29 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
 # Quota Management
 # -----------------------------
 
-# Quota limits
-FREE_TIER_QUOTA = 100  # messages per month for free users
-PAID_TIER_QUOTA = 5000  # messages per month for paid users
+# Quota limits (v3.0.0 - tier-based)
+FREE_TIER_QUOTA = 100   # messages per month for free signed-in users
+PRO_TIER_QUOTA = 1000   # messages per month for Pro subscribers ($8/month)
+PLUS_TIER_QUOTA = 2000  # messages per month for Plus subscribers ($19/month)
 QUOTA_PERIOD_DAYS = 30  # rolling period for free users
+
+
+def get_quota_limit_for_tier(tier: Optional[str], is_paid: bool) -> int:
+    """Get quota limit based on subscription tier.
+    
+    Args:
+        tier: Subscription tier ('pro', 'plus', or None)
+        is_paid: Whether user has active subscription
+    
+    Returns:
+        Quota limit for the tier
+    """
+    if not is_paid:
+        return FREE_TIER_QUOTA
+    if tier == 'plus':
+        return PLUS_TIER_QUOTA
+    # Default to Pro for all paid users (including 'pro' tier and legacy users without tier)
+    return PRO_TIER_QUOTA
 
 
 async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = None) -> dict:
@@ -775,7 +794,7 @@ async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = No
     
     Returns:
     - used: messages used this period
-    - limit: total allowed for this period
+    - limit: total allowed for this period (tier-based)
     - remaining: messages remaining
     - period_ends_at: when current period ends
     - is_paid: whether user has paid subscription
@@ -794,14 +813,16 @@ async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = No
     # Determine if paid user
     status = user.get("subscription_status", "none")
     is_paid = status in ("trialing", "active")
+    tier = user.get("subscription_tier")  # 'pro', 'plus', or None
     
     # Check if subscription has ended
     sub_ends_at = user.get("subscription_ends_at")
     if sub_ends_at and datetime.now() > sub_ends_at:
         is_paid = False
+        tier = None
     
-    # Determine quota limit
-    limit = PAID_TIER_QUOTA if is_paid else FREE_TIER_QUOTA
+    # Determine quota limit based on tier
+    limit = get_quota_limit_for_tier(tier, is_paid)
     
     # Get quota period info
     quota_period_start = user.get("quota_period_start") or datetime.now()
@@ -860,12 +881,14 @@ async def increment_quota(provider: str, oauth_id: str, count: int = 1) -> Optio
     if not user:
         return None
     
-    # Determine if paid user
+    # Determine if paid user and tier
     status = user.get("subscription_status", "none")
     is_paid = status in ("trialing", "active")
+    tier = user.get("subscription_tier")  # 'pro', 'plus', or None
     sub_ends_at = user.get("subscription_ends_at")
     if sub_ends_at and datetime.now() > sub_ends_at:
         is_paid = False
+        tier = None
     
     # Check if period needs reset
     quota_period_start = user.get("quota_period_start") or datetime.now()
@@ -916,7 +939,7 @@ async def increment_quota(provider: str, oauth_id: str, count: int = 1) -> Optio
     if not row:
         return None
     
-    limit = PAID_TIER_QUOTA if is_paid else FREE_TIER_QUOTA
+    limit = get_quota_limit_for_tier(tier, is_paid)
     used = row['message_quota_used']
     
     return {
