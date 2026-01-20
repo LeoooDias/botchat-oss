@@ -396,6 +396,31 @@ async def _create_tables():
             END $$;
         """)
 
+        # V3.0.1: Update oauth_provider CHECK constraint to include 'anonymous'
+        # This migration handles existing databases that have the old constraint
+        await conn.execute("""
+            DO $$
+            DECLARE
+                constraint_def text;
+            BEGIN
+                -- Check if constraint exists and doesn't include 'anonymous'
+                SELECT pg_get_constraintdef(oid) INTO constraint_def
+                FROM pg_constraint
+                WHERE conname = 'users_oauth_provider_check';
+                
+                IF constraint_def IS NOT NULL AND constraint_def NOT LIKE '%anonymous%' THEN
+                    -- Drop old constraint and add new one with 'anonymous'
+                    ALTER TABLE users DROP CONSTRAINT users_oauth_provider_check;
+                    ALTER TABLE users ADD CONSTRAINT users_oauth_provider_check
+                        CHECK (oauth_provider IN ('github', 'google', 'apple', 'microsoft', 'email', 'dev', 'anonymous'));
+                ELSIF constraint_def IS NULL THEN
+                    -- No constraint exists, add it
+                    ALTER TABLE users ADD CONSTRAINT users_oauth_provider_check
+                        CHECK (oauth_provider IN ('github', 'google', 'apple', 'microsoft', 'email', 'dev', 'anonymous'));
+                END IF;
+            END $$;
+        """)
+
         # Index for fast anonymous user lookups
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_users_anonymous_fingerprint
