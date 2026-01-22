@@ -346,6 +346,7 @@ class OpenAIProvider:
             "model": model,
             "messages": messages,
             "stream": True,
+            "stream_options": {"include_usage": True},  # Get token counts in final chunk
             "store": False,  # Disable application state storage
         }
         
@@ -368,12 +369,19 @@ class OpenAIProvider:
             request_params["max_completion_tokens"] = max_tokens
         
         # Stream response
+        usage_info: Dict[str, int] = {}
         try:
             response_stream: Stream[ChatCompletionChunk] = self.client.chat.completions.create(**request_params)  # type: ignore[assignment]
             
             for chunk in response_stream:  # pyright: ignore[reportUnknownVariableType]
                 if chunk.choices and chunk.choices[0].delta.content:  # pyright: ignore[reportUnknownMemberType]
                     yield chunk.choices[0].delta.content  # pyright: ignore[reportUnknownMemberType]
+                # Capture usage from final chunk (when stream_options.include_usage=True)
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    usage_info = {
+                        'input_tokens': getattr(chunk.usage, 'prompt_tokens', 0) or 0,
+                        'output_tokens': getattr(chunk.usage, 'completion_tokens', 0) or 0,
+                    }
                     
         except Exception as e:
             # Tightened logging: avoid leaking prompts via exception strings
@@ -415,8 +423,8 @@ class OpenAIProvider:
             except Exception:
                 pass  # Cleanup is best-effort
         
-        # Return empty citations for non-web-search requests
-        return {'citations': citations}
+        # Return citations and usage info
+        return {'citations': citations, 'usage': usage_info}
     
     def _stream_with_web_search(
         self,

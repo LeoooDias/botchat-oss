@@ -520,7 +520,14 @@ async def _create_tables():
                 return_24h INT DEFAULT 0,
                 return_48h INT DEFAULT 0,
                 checkout_started INT DEFAULT 0,
-                payment_completed INT DEFAULT 0
+                payment_completed INT DEFAULT 0,
+                -- Token usage tracking (added v3.x)
+                openai_input_tokens BIGINT DEFAULT 0,
+                openai_output_tokens BIGINT DEFAULT 0,
+                gemini_input_tokens BIGINT DEFAULT 0,
+                gemini_output_tokens BIGINT DEFAULT 0,
+                anthropic_input_tokens BIGINT DEFAULT 0,
+                anthropic_output_tokens BIGINT DEFAULT 0
             );
         """)
         

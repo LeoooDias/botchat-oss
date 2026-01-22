@@ -431,11 +431,27 @@ class AnthropicProvider:
                 
                 if citations:
                     logger.debug("Total citations from Anthropic web search: %d", len(citations))
+                
+                # For web search, we can get usage from the non-streaming response
+                usage_info = {}
+                if hasattr(response, 'usage'):
+                    usage_info = {
+                        'input_tokens': getattr(response.usage, 'input_tokens', 0) or 0,
+                        'output_tokens': getattr(response.usage, 'output_tokens', 0) or 0,
+                    }
             else:
                 # Standard streaming without web search
+                usage_info = {}
                 with self.client.messages.stream(**request_params) as stream:
                     for text in stream.text_stream:
                         yield text
+                    # Get usage from final message
+                    final_message = stream.get_final_message()
+                    if final_message and hasattr(final_message, 'usage'):
+                        usage_info = {
+                            'input_tokens': getattr(final_message.usage, 'input_tokens', 0) or 0,
+                            'output_tokens': getattr(final_message.usage, 'output_tokens', 0) or 0,
+                        }
                     
         except anthropic.RateLimitError as e:
             logger.error("Anthropic rate limit error (%s)", type(e).__name__)
@@ -481,8 +497,8 @@ class AnthropicProvider:
             except Exception:
                 pass  # Cleanup is best-effort
         
-        # Return citations
-        return {'citations': citations}
+        # Return citations and usage
+        return {'citations': citations, 'usage': usage_info}
     
     def _build_messages(
         self,

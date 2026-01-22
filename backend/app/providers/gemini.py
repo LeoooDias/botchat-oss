@@ -325,6 +325,7 @@ class GeminiProvider:
         
         # Stream response
         citations: List[Dict[str, Any]] = []
+        usage_info: Dict[str, int] = {}
         try:
             response_stream = self.client.models.generate_content_stream(  # type: ignore[misc]
                 model=model,
@@ -334,9 +335,18 @@ class GeminiProvider:
             
             final_response = None
             for chunk in response_stream:
-                final_response = chunk  # Keep track of final chunk for grounding metadata
+                final_response = chunk  # Keep track of final chunk for grounding metadata + usage
                 if chunk.text:
                     yield chunk.text
+            
+            # Extract usage metadata from final response
+            if final_response:
+                usage_metadata = getattr(final_response, 'usage_metadata', None)
+                if usage_metadata:
+                    usage_info = {
+                        'input_tokens': getattr(usage_metadata, 'prompt_token_count', 0) or 0,
+                        'output_tokens': getattr(usage_metadata, 'candidates_token_count', 0) or 0,
+                    }
             
             # Extract citations from grounding metadata (available in final response)
             if web_search_enabled and final_response:
@@ -360,8 +370,8 @@ class GeminiProvider:
                 except Exception as e:
                     logger.warning("Failed to extract Gemini citations: %s", type(e).__name__)
             
-            # Return citations via generator return value
-            return {'citations': citations}
+            # Return citations and usage via generator return value
+            return {'citations': citations, 'usage': usage_info}
                     
         except Exception as e:
             # Tightened logging: avoid leaking prompts via exception strings
