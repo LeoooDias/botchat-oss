@@ -13,11 +13,17 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+	// @ts-ignore - module resolved via parent project symlink
 	import { Marked } from 'marked';
+	// @ts-ignore - module resolved via parent project symlink
 	import hljs from 'highlight.js';
+	// @ts-ignore - module resolved via parent project symlink
 	import DOMPurify from 'dompurify';
+	// @ts-ignore - module resolved via parent project symlink
 	import CitationsPopup from './CitationsPopup.svelte';
+	// @ts-ignore - module resolved via parent project symlink
 	import type { Citation } from './CitationsPopup.svelte';
+	// @ts-ignore - module resolved via parent project symlink
 	import { formatProviderName } from '$lib/utils/format';
 
 	const dispatch = createEventDispatcher<{ 
@@ -188,7 +194,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		switch (mode) {
 			case 'chat': return { label: 'Chat', color: 'text-green-600 dark:text-green-400' };
 			case 'ask': return { label: 'Ask', color: 'text-gray-500 dark:text-gray-400' };
-			case 'study': return { label: 'Study', color: 'text-blue-600 dark:text-blue-400' };
+			case 'study': return { label: 'Study', color: 'text-brand' };
 			default: return null;
 		}
 	}
@@ -265,7 +271,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 				<div
 					class={`px-3 md:px-4 py-2.5 md:py-3 rounded-2xl md:rounded-lg ${
 						msg.role === 'user'
-							? 'bg-blue-600 text-white rounded-br-sm md:rounded-br-none'
+							? 'bg-brand text-white rounded-br-sm md:rounded-br-none'
 							: msg.isError
 								? 'bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-bl-sm md:rounded-bl-none text-red-900 dark:text-red-100'
 								: 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-bl-sm md:rounded-bl-none text-gray-900 dark:text-gray-100'
@@ -282,7 +288,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 								<span class="text-[9px] md:text-[10px] font-medium {modeInfo?.color}">• {modeInfo?.label}</span>
 							{/if}
 						</div>
-						<div class="prose prose-sm max-w-none dark:prose-invert text-sm leading-relaxed prose-p:m-0 prose-p:mb-2 prose-headings:mt-3 prose-headings:mb-2 prose-h1:text-base prose-h2:text-sm prose-h3:text-sm prose-ul:m-0 prose-ul:mb-2 prose-ul:pl-4 prose-li:m-0 prose-ol:m-0 prose-ol:mb-2 prose-ol:pl-6 prose-blockquote:border-l-4 prose-blockquote:border-gray-400 dark:prose-blockquote:border-gray-500 prose-blockquote:pl-3 prose-blockquote:italic prose-blockquote:m-0 prose-blockquote:mb-2 prose-code:bg-gray-200 dark:prose-code:bg-gray-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-code:text-xs prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline hover:prose-a:text-blue-800 dark:hover:prose-a:text-blue-300 prose-strong:font-bold prose-em:italic">
+						<div class="prose prose-sm max-w-none dark:prose-invert text-sm leading-relaxed prose-p:m-0 prose-p:mb-2 prose-headings:mt-3 prose-headings:mb-2 prose-h1:text-base prose-h2:text-sm prose-h3:text-sm prose-ul:m-0 prose-ul:mb-2 prose-ul:pl-4 prose-li:m-0 prose-ol:m-0 prose-ol:mb-2 prose-ol:pl-6 prose-blockquote:border-l-4 prose-blockquote:border-gray-400 dark:prose-blockquote:border-gray-500 prose-blockquote:pl-3 prose-blockquote:italic prose-blockquote:m-0 prose-blockquote:mb-2 prose-code:bg-gray-200 dark:prose-code:bg-gray-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-gray-800 dark:prose-code:text-gray-300 prose-code:text-xs prose-a:text-gray-700 dark:prose-a:text-gray-300 prose-a:underline hover:prose-a:text-gray-900 dark:hover:prose-a:text-gray-100 prose-strong:font-bold prose-em:italic">
 							{#await renderMarkdown(msg.content)}
 								<p>Loading...</p>
 							{:then html}
@@ -303,10 +309,10 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							</div>
 						{/if}
 						{#if msg.citations && msg.citations.length > 0}
-							<div class="mt-2 pt-2 border-t border-blue-200 dark:border-blue-800">
+							<div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
 								<button
 									on:click={() => openCitations(msg.citations || [])}
-									class="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition font-medium"
+									class="flex items-center gap-1.5 text-xs text-brand hover:text-brand-dark transition font-medium"
 								>
 									<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
 										<path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
@@ -339,10 +345,10 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		{#if msg.role === 'assistant' && !msg.isError && msg.botId}
 			<button
 				on:click={() => dispatch('export', { message: msg })}
-				class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-400 dark:hover:border-blue-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+				class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
 				title="Export this message"
 			>
-				<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+				<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
 				</svg>
 			</button>
@@ -352,10 +358,10 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 			{#if msg.role === 'assistant' && !msg.isError && msg.botId}
 				<button
 					on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
-					class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-400 dark:hover:border-blue-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+					class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
 					title="Reply to this bot only"
 				>
-					<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+					<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
 					</svg>
 				</button>
@@ -374,7 +380,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<span>{formatProviderName(bot.provider)}</span>
 					{#if bot.webSearchEnabled}
 						<span title="Web search enabled">
-							<svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+							<svg class="w-3.5 h-3.5 text-brand" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5a17.919 17.919 0 01-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
 							</svg>
 						</span>
