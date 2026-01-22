@@ -12,7 +12,7 @@
 """Authentication module for botchat.
 
 Handles OAuth token validation and JWT generation/verification.
-Supports GitHub, Google, Apple, and Microsoft OAuth providers.
+Supports GitHub, Google, and Apple OAuth providers.
 
 PSEUDONYMOUS AUTHENTICATION MODEL:
 Users are identified by a stable pseudonym (hashed OAuth ID) that:
@@ -56,7 +56,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_SECONDS = 604800  # 7 days (was 1 hour)
 
-# OAuth Client IDs/Secrets
+# OAuth Client IDs/Secrets - Default (botchat)
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -65,9 +65,16 @@ APPLE_CLIENT_ID = os.environ.get("APPLE_CLIENT_ID", "")  # Service ID (e.g., com
 APPLE_TEAM_ID = os.environ.get("APPLE_TEAM_ID", "")
 APPLE_KEY_ID = os.environ.get("APPLE_KEY_ID", "")
 APPLE_PRIVATE_KEY = os.environ.get("APPLE_PRIVATE_KEY", "")  # PEM format, newlines as \n
-MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "")
-MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "")
-MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "common")  # 'common' for multi-tenant
+
+# OAuth Client IDs/Secrets - Hushhush brand (separate apps for branding)
+HUSHHUSH_GITHUB_CLIENT_ID = os.environ.get("HUSHHUSH_GITHUB_CLIENT_ID", "")
+HUSHHUSH_GITHUB_CLIENT_SECRET = os.environ.get("HUSHHUSH_GITHUB_CLIENT_SECRET", "")
+HUSHHUSH_GOOGLE_CLIENT_ID = os.environ.get("HUSHHUSH_GOOGLE_CLIENT_ID", "")
+HUSHHUSH_GOOGLE_CLIENT_SECRET = os.environ.get("HUSHHUSH_GOOGLE_CLIENT_SECRET", "")
+HUSHHUSH_APPLE_CLIENT_ID = os.environ.get("HUSHHUSH_APPLE_CLIENT_ID", "")  # Service ID for hushhush
+HUSHHUSH_APPLE_TEAM_ID = os.environ.get("HUSHHUSH_APPLE_TEAM_ID", "")
+HUSHHUSH_APPLE_KEY_ID = os.environ.get("HUSHHUSH_APPLE_KEY_ID", "")
+HUSHHUSH_APPLE_PRIVATE_KEY = os.environ.get("HUSHHUSH_APPLE_PRIVATE_KEY", "")
 
 # Auth mode - disable for local development
 REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "false").lower() == "true"
@@ -143,7 +150,7 @@ ALLOWED_OAUTH_IDS: set[str] = {
 }
 
 
-def hash_oauth_id(provider: str, oauth_id: str) -> str:
+def hash_oauth_id(provider: str, oauth_id: str, brand: str = "botchat") -> str:
     """Hash an OAuth ID with the secret salt (app-level pepper).
     
     SECURITY PROPERTIES:
@@ -151,6 +158,7 @@ def hash_oauth_id(provider: str, oauth_id: str) -> str:
     - Irreversible: cannot recover original OAuth ID from hash
     - App-specific: different apps using same OAuth provider get different hashes
     - Provider-namespaced: same user ID from different providers = different hash
+    - Brand-namespaced: same user on different brands = different hash (V3.x)
     
     The salt (OAUTH_HASH_SALT) acts as an "app-level pepper" that ensures:
     - Our hashes can't be matched against OAuth ID leaks from other apps
@@ -158,14 +166,18 @@ def hash_oauth_id(provider: str, oauth_id: str) -> str:
     
     CRITICAL: The salt MUST be kept secret and NEVER changed.
     Changing it will orphan all existing user accounts.
+    
+    V3.x MULTI-BRAND: Brand is included in hash for identity separation.
+    Users on botchat and hushhush are completely separate accounts.
     """
     if not OAUTH_HASH_SALT:
         # In development without salt, use raw ID (not for production!)
         logger.warning("OAUTH_HASH_SALT not set - using raw OAuth IDs (insecure)")
         return f"{provider}:{oauth_id}"
     
-    # Create a secure hash: SHA-256(salt:provider:oauth_id)
-    data = f"{OAUTH_HASH_SALT}:{provider}:{oauth_id}".encode('utf-8')
+    # Create a secure hash: SHA-256(salt:brand:provider:oauth_id)
+    # Brand included for multi-brand identity separation
+    data = f"{OAUTH_HASH_SALT}:{brand}:{provider}:{oauth_id}".encode('utf-8')
     return hashlib.sha256(data).hexdigest()
 
 
@@ -250,6 +262,49 @@ def check_user_allowed(hashed_id: str) -> None:
 
 
 # -----------------------------
+# Brand Detection for Multi-Brand OAuth
+# -----------------------------
+
+def detect_brand_from_redirect_uri(redirect_uri: str) -> str:
+    """Detect brand from OAuth redirect URI.
+    
+    Returns 'hushhush' for hushhush.ai domains, 'botchat' otherwise.
+    """
+    if "hushhush" in redirect_uri.lower():
+        return "hushhush"
+    return "botchat"
+
+
+def get_github_credentials(brand: str) -> tuple[str, str]:
+    """Get GitHub OAuth credentials for the specified brand."""
+    if brand == "hushhush" and HUSHHUSH_GITHUB_CLIENT_ID:
+        return HUSHHUSH_GITHUB_CLIENT_ID, HUSHHUSH_GITHUB_CLIENT_SECRET
+    return GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+
+
+def get_google_credentials(brand: str) -> tuple[str, str]:
+    """Get Google OAuth credentials for the specified brand."""
+    if brand == "hushhush" and HUSHHUSH_GOOGLE_CLIENT_ID:
+        return HUSHHUSH_GOOGLE_CLIENT_ID, HUSHHUSH_GOOGLE_CLIENT_SECRET
+    return GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+
+
+def get_apple_credentials(brand: str) -> tuple[str, str, str, str]:
+    """Get Apple OAuth credentials for the specified brand.
+    
+    Returns: (client_id, team_id, key_id, private_key)
+    """
+    if brand == "hushhush" and HUSHHUSH_APPLE_CLIENT_ID:
+        return (
+            HUSHHUSH_APPLE_CLIENT_ID,
+            HUSHHUSH_APPLE_TEAM_ID,
+            HUSHHUSH_APPLE_KEY_ID,
+            HUSHHUSH_APPLE_PRIVATE_KEY,
+        )
+    return APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY
+
+
+# -----------------------------
 # Models
 # -----------------------------
 
@@ -261,14 +316,14 @@ class UserInfo:
     - user_id is a hashed OAuth ID (irreversible)
     - No email, name, or avatar stored
     """
-    provider: str  # "github", "google", "apple", or "microsoft"
+    provider: str  # "github", "google", or "apple"
     user_id: str   # Hashed OAuth ID (SHA-256 of salt:provider:raw_oauth_id)
 
 
 class OAuthCallbackRequest(BaseModel):
     """OAuth callback with authorization code."""
     code: str
-    provider: str  # "github", "google", "apple", or "microsoft"
+    provider: str  # "github", "google", or "apple"
     redirect_uri: str
     id_token: Optional[str] = None  # Apple sends id_token via POST
     anonymous_fingerprint: Optional[str] = None  # v3.0.1: For merging anonymous usage
@@ -306,7 +361,7 @@ def create_jwt(user: UserInfo) -> Tuple[str, int]:
     """Create a signed JWT for authenticated user.
     
     PRIVACY: JWT contains only anonymous data:
-    - provider (github/google/apple/microsoft)
+    - provider (github/google/apple)
     - hashed user ID (cannot be reversed)
     - NO email, name, or avatar
     
@@ -365,11 +420,15 @@ async def exchange_github_code(code: str, redirect_uri: str) -> UserInfo:
     No email, name, or avatar is stored or returned.
     
     Flow:
-    1. Exchange code for access token
+    1. Exchange code for access token (using brand-specific credentials)
     2. Fetch user ID from GitHub API
     3. Hash the ID and return anonymous UserInfo
     """
-    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+    # Get brand-specific credentials
+    brand = detect_brand_from_redirect_uri(redirect_uri)
+    client_id, client_secret = get_github_credentials(brand)
+    
+    if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
     
     async with httpx.AsyncClient() as client:
@@ -377,8 +436,8 @@ async def exchange_github_code(code: str, redirect_uri: str) -> UserInfo:
         token_resp = await client.post(
             "https://github.com/login/oauth/access_token",
             data={
-                "client_id": GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
+                "client_id": client_id,
+                "client_secret": client_secret,
                 "code": code,
                 "redirect_uri": redirect_uri,
             },
@@ -413,8 +472,9 @@ async def exchange_github_code(code: str, redirect_uri: str) -> UserInfo:
         user_data = user_resp.json()
         raw_oauth_id = str(user_data["id"])
         
-        # Step 3: Hash the OAuth ID - NO PII is stored
-        hashed_id = hash_oauth_id("github", raw_oauth_id)
+        # Step 3: Hash the OAuth ID with brand - NO PII is stored
+        # Brand included for multi-brand identity separation
+        hashed_id = hash_oauth_id("github", raw_oauth_id, brand)
         
         # Check allowlist
         check_user_allowed(hashed_id)
@@ -433,11 +493,15 @@ async def exchange_google_code(code: str, redirect_uri: str) -> UserInfo:
     No email, name, or avatar is stored or returned.
     
     Flow:
-    1. Exchange code for tokens (including id_token)
+    1. Exchange code for tokens (using brand-specific credentials)
     2. Decode id_token to get user ID only
     3. Hash the ID and return anonymous UserInfo
     """
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+    # Get brand-specific credentials
+    brand = detect_brand_from_redirect_uri(redirect_uri)
+    client_id, client_secret = get_google_credentials(brand)
+    
+    if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
     
     async with httpx.AsyncClient() as client:
@@ -445,8 +509,8 @@ async def exchange_google_code(code: str, redirect_uri: str) -> UserInfo:
         token_resp = await client.post(
             "https://oauth2.googleapis.com/token",
             data={
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
+                "client_id": client_id,
+                "client_secret": client_secret,
                 "code": code,
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
@@ -471,8 +535,9 @@ async def exchange_google_code(code: str, redirect_uri: str) -> UserInfo:
         
         raw_oauth_id = claims["sub"]
         
-        # Step 3: Hash the OAuth ID - NO PII is stored
-        hashed_id = hash_oauth_id("google", raw_oauth_id)
+        # Step 3: Hash the OAuth ID with brand - NO PII is stored
+        # Brand included for multi-brand identity separation
+        hashed_id = hash_oauth_id("google", raw_oauth_id, brand)
         
         # Check allowlist
         check_user_allowed(hashed_id)
@@ -491,32 +556,36 @@ async def exchange_apple_code(code: str, redirect_uri: str, id_token: Optional[s
     No email, name, or avatar is stored or returned.
     
     Apple Sign In flow:
-    1. Generate client_secret JWT signed with Apple private key
+    1. Generate client_secret JWT signed with Apple private key (brand-specific)
     2. Exchange code for tokens (including id_token)
     3. Decode id_token to get user ID only
     4. Hash the ID and return anonymous UserInfo
     """
-    if not APPLE_CLIENT_ID or not APPLE_TEAM_ID or not APPLE_KEY_ID or not APPLE_PRIVATE_KEY:
+    # Get brand-specific credentials
+    brand = detect_brand_from_redirect_uri(redirect_uri)
+    apple_client_id, apple_team_id, apple_key_id, apple_private_key = get_apple_credentials(brand)
+    
+    if not apple_client_id or not apple_team_id or not apple_key_id or not apple_private_key:
         raise HTTPException(status_code=500, detail="Apple OAuth not configured")
     
     # Apple requires a client_secret JWT signed with your private key
     import time as time_module
     client_secret_payload: dict[str, Any] = {
-        "iss": APPLE_TEAM_ID,
+        "iss": apple_team_id,
         "iat": int(time_module.time()),
         "exp": int(time_module.time()) + 86400 * 180,  # 6 months max
         "aud": "https://appleid.apple.com",
-        "sub": APPLE_CLIENT_ID,
+        "sub": apple_client_id,
     }
     
     # Handle private key - may have \n as literal string
-    private_key = APPLE_PRIVATE_KEY.replace("\\n", "\n")
+    private_key = apple_private_key.replace("\\n", "\n")
     
     client_secret = jwt.encode(
         client_secret_payload,
         private_key,
         algorithm="ES256",
-        headers={"kid": APPLE_KEY_ID}
+        headers={"kid": apple_key_id}
     )
     
     async with httpx.AsyncClient() as client:
@@ -524,7 +593,7 @@ async def exchange_apple_code(code: str, redirect_uri: str, id_token: Optional[s
         token_resp = await client.post(
             "https://appleid.apple.com/auth/token",
             data={
-                "client_id": APPLE_CLIENT_ID,
+                "client_id": apple_client_id,
                 "client_secret": client_secret,
                 "code": code,
                 "grant_type": "authorization_code",
@@ -551,8 +620,9 @@ async def exchange_apple_code(code: str, redirect_uri: str, id_token: Optional[s
         
         raw_oauth_id = claims["sub"]
         
-        # Hash the OAuth ID - NO PII is stored
-        hashed_id = hash_oauth_id("apple", raw_oauth_id)
+        # Hash the OAuth ID with brand - NO PII is stored
+        # Brand included for multi-brand identity separation
+        hashed_id = hash_oauth_id("apple", raw_oauth_id, brand)
         
         # Check allowlist
         check_user_allowed(hashed_id)
@@ -560,82 +630,6 @@ async def exchange_apple_code(code: str, redirect_uri: str, id_token: Optional[s
         # Return anonymous user - NO PII
         return UserInfo(
             provider="apple",
-            user_id=hashed_id,
-        )
-
-
-async def exchange_microsoft_code(code: str, redirect_uri: str) -> UserInfo:
-    """Exchange Microsoft OAuth code for user info.
-    
-    PRIVACY-FIRST: We only extract the user ID and hash it.
-    No email, name, or avatar is stored or returned.
-    
-    Flow:
-    1. Exchange code for tokens (including id_token)
-    2. Decode id_token to get user ID only
-    3. Hash the ID and return anonymous UserInfo
-    """
-    if not MICROSOFT_CLIENT_ID or not MICROSOFT_CLIENT_SECRET:
-        raise HTTPException(status_code=500, detail="Microsoft OAuth not configured")
-    
-    async with httpx.AsyncClient() as client:
-        # Exchange code for tokens
-        token_resp = await client.post(
-            f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/token",
-            data={
-                "client_id": MICROSOFT_CLIENT_ID,
-                "client_secret": MICROSOFT_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        
-        if token_resp.status_code != 200:
-            logger.error("Microsoft token exchange failed: %s", token_resp.text)
-            raise HTTPException(status_code=401, detail="Microsoft authentication failed")
-        
-        token_data = token_resp.json()
-        access_token = token_data.get("access_token")
-        id_token = token_data.get("id_token")
-        
-        if not access_token:
-            raise HTTPException(status_code=401, detail="Microsoft access_token missing")
-        
-        # Get user ID from id_token or Graph API
-        raw_oauth_id = None
-        
-        if id_token:
-            try:
-                claims = jwt.get_unverified_claims(id_token)
-                raw_oauth_id = claims.get("sub") or claims.get("oid")
-            except JWTError:
-                pass
-        
-        # Fall back to Graph API if no ID from token
-        if not raw_oauth_id:
-            user_resp = await client.get(
-                "https://graph.microsoft.com/v1.0/me",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            
-            if user_resp.status_code == 200:
-                user_data = user_resp.json()
-                raw_oauth_id = user_data.get("id")
-        
-        if not raw_oauth_id:
-            raise HTTPException(status_code=401, detail="Failed to get Microsoft user ID")
-        
-        # Hash the OAuth ID - NO PII is stored
-        hashed_id = hash_oauth_id("microsoft", raw_oauth_id)
-        
-        # Check allowlist
-        check_user_allowed(hashed_id)
-        
-        # Return anonymous user - NO PII
-        return UserInfo(
-            provider="microsoft",
             user_id=hashed_id,
         )
 
@@ -653,8 +647,6 @@ async def exchange_oauth_code(req: OAuthCallbackRequest) -> UserInfo:
             raise HTTPException(status_code=500, detail="BACKEND_URL not configured for Apple Sign In")
         apple_redirect = f"{backend_url}/auth/apple/callback"
         return await exchange_apple_code(req.code, apple_redirect, req.id_token)
-    elif req.provider == "microsoft":
-        return await exchange_microsoft_code(req.code, req.redirect_uri)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
 
@@ -726,11 +718,15 @@ def get_github_auth_url(redirect_uri: str, state: str = "") -> str:
     """Build GitHub OAuth authorization URL.
     
     PRIVACY: Minimal scope - only read:user for user ID.
+    Uses brand-specific credentials based on redirect_uri.
     """
     from urllib.parse import urlencode
     
+    brand = detect_brand_from_redirect_uri(redirect_uri)
+    client_id, _ = get_github_credentials(brand)
+    
     params = {
-        "client_id": GITHUB_CLIENT_ID,
+        "client_id": client_id,
         "redirect_uri": redirect_uri,
         "scope": "read:user",
     }
@@ -743,11 +739,15 @@ def get_google_auth_url(redirect_uri: str, state: str = "") -> str:
     """Build Google OAuth authorization URL.
     
     PRIVACY: Minimal scope - only openid for user ID (sub claim).
+    Uses brand-specific credentials for proper consent screen branding.
     """
     from urllib.parse import urlencode
     
+    brand = detect_brand_from_redirect_uri(redirect_uri)
+    client_id, _ = get_google_credentials(brand)
+    
     params = {
-        "client_id": GOOGLE_CLIENT_ID,
+        "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "openid",
@@ -763,11 +763,15 @@ def get_apple_auth_url(redirect_uri: str, state: str = "") -> str:
     """Build Apple OAuth authorization URL.
     
     PRIVACY: Minimal scope - Apple provides 'sub' claim regardless of scope.
+    Uses brand-specific credentials based on redirect_uri.
     """
     from urllib.parse import urlencode
     
+    brand = detect_brand_from_redirect_uri(redirect_uri)
+    apple_client_id, _, _, _ = get_apple_credentials(brand)
+    
     params = {
-        "client_id": APPLE_CLIENT_ID,
+        "client_id": apple_client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "response_mode": "form_post",  # Apple requires form_post for web
@@ -775,22 +779,3 @@ def get_apple_auth_url(redirect_uri: str, state: str = "") -> str:
     if state:
         params["state"] = state
     return f"https://appleid.apple.com/auth/authorize?{urlencode(params)}"
-
-
-def get_microsoft_auth_url(redirect_uri: str, state: str = "") -> str:
-    """Build Microsoft OAuth authorization URL.
-    
-    PRIVACY: Minimal scope - only openid for user ID.
-    """
-    from urllib.parse import urlencode
-    
-    params = {
-        "client_id": MICROSOFT_CLIENT_ID,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid",
-        "response_mode": "query",
-    }
-    if state:
-        params["state"] = state
-    return f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize?{urlencode(params)}"
