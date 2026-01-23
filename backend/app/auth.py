@@ -167,17 +167,23 @@ def hash_oauth_id(provider: str, oauth_id: str, brand: str = "botchat") -> str:
     CRITICAL: The salt MUST be kept secret and NEVER changed.
     Changing it will orphan all existing user accounts.
     
-    V3.x MULTI-BRAND: Brand is included in hash for identity separation.
-    Users on botchat and hushhush are completely separate accounts.
+    V3.x MULTI-BRAND: New brands (hushhush) include brand in hash for identity
+    separation. BACKWARD COMPATIBLE: botchat uses legacy hash format to preserve
+    existing user accounts.
     """
     if not OAUTH_HASH_SALT:
         # In development without salt, use raw ID (not for production!)
         logger.warning("OAUTH_HASH_SALT not set - using raw OAuth IDs (insecure)")
         return f"{provider}:{oauth_id}"
     
-    # Create a secure hash: SHA-256(salt:brand:provider:oauth_id)
-    # Brand included for multi-brand identity separation
-    data = f"{OAUTH_HASH_SALT}:{brand}:{provider}:{oauth_id}".encode('utf-8')
+    # BACKWARD COMPATIBILITY: For botchat brand, use legacy hash format
+    # to preserve existing user accounts. Only new brands use the new format.
+    if brand == "botchat":
+        # Legacy format: SHA-256(salt:provider:oauth_id)
+        data = f"{OAUTH_HASH_SALT}:{provider}:{oauth_id}".encode('utf-8')
+    else:
+        # New format for multi-brand: SHA-256(salt:brand:provider:oauth_id)
+        data = f"{OAUTH_HASH_SALT}:{brand}:{provider}:{oauth_id}".encode('utf-8')
     return hashlib.sha256(data).hexdigest()
 
 
