@@ -830,7 +830,8 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
 async def promote_anonymous_to_authenticated(
     fingerprint: str,
     provider: str,
-    oauth_id: str
+    oauth_id: str,
+    brand: str = "botchat"
 ) -> dict:
     """Promote anonymous user to authenticated user on sign-in.
 
@@ -845,6 +846,7 @@ async def promote_anonymous_to_authenticated(
         fingerprint: Anonymous user's browser fingerprint
         provider: OAuth provider (github, google, etc.)
         oauth_id: Hashed OAuth ID
+        brand: Brand context (botchat, hushhush)
 
     Returns:
         Updated or newly created user dict
@@ -865,6 +867,7 @@ async def promote_anonymous_to_authenticated(
         if anon_user:
             # Update existing anonymous user to authenticated
             # KEEP the fingerprint - prevents gaming by signing out and using anonymous mode
+            # Also update brand for promoted users
             row = await conn.fetchrow(
                 """
                 UPDATE users
@@ -872,26 +875,27 @@ async def promote_anonymous_to_authenticated(
                     oauth_id = $2,
                     is_anonymous = FALSE,
                     promoted_at = NOW(),
-                    updated_at = NOW()
+                    updated_at = NOW(),
+                    brand = $4
                 WHERE id = $3
                 RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                           subscription_status, subscription_id, subscription_ends_at,
                           message_quota_used, quota_period_start,
                           total_messages, recovery_email_hash, recovery_email_set_at,
                           created_at, updated_at, account_status, subscription_tier,
-                          is_anonymous, promoted_at
+                          is_anonymous, promoted_at, brand
                 """,
-                provider, oauth_id, anon_user['id']
+                provider, oauth_id, anon_user['id'], brand
             )
             logger.info(
                 f"Promoted anonymous user {anon_user['id']} to {provider}:{oauth_id[:16]}... "
-                f"(carried over {anon_user['message_quota_used']} messages, kept fingerprint)"
+                f"(carried over {anon_user['message_quota_used']} messages, kept fingerprint, brand={brand})"
             )
             return dict(row)
         else:
             # No anonymous record - create new authenticated user normally
             logger.info(f"No anonymous user found for fingerprint, creating new: {provider}:{oauth_id[:16]}...")
-            return await create_user(provider, oauth_id)
+            return await create_user(provider, oauth_id, brand=brand)
 
 
 async def update_user_stripe_customer(
