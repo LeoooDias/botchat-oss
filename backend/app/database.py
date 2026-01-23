@@ -678,11 +678,12 @@ async def get_user_for_billing(provider: str, oauth_id: str, email: Optional[str
     return await get_user_by_oauth(provider, oauth_id)
 
 
-async def create_user(provider: str, oauth_id: str, email: Optional[str] = None) -> dict:
+async def create_user(provider: str, oauth_id: str, email: Optional[str] = None, brand: str = "botchat") -> dict:
     """Create a new user or return existing user by OAuth identity.
     
     PRIVACY: oauth_id is a hash, not the raw OAuth ID.
     Email parameter is ignored (kept for API compatibility during migration).
+    Brand is stored for analytics separation between botchat and hushhush.
     
     ABUSE PREVENTION: Checks tombstone table - if account was recently deleted,
     blocks re-registration until the cooldown period expires (90 days).
@@ -742,15 +743,15 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None)
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO users (oauth_provider, oauth_id, total_messages)
-            VALUES ($1, $2, 0)
+            INSERT INTO users (oauth_provider, oauth_id, total_messages, brand)
+            VALUES ($1, $2, 0, $3)
             RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                       subscription_status, subscription_id, subscription_ends_at,
                       message_quota_used, quota_period_start,
                       total_messages, recovery_email_hash, recovery_email_set_at,
-                      created_at, updated_at
+                      created_at, updated_at, brand
             """,
-            provider, oauth_id
+            provider, oauth_id, brand
         )
         return dict(row)
 
