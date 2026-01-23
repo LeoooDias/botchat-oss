@@ -346,7 +346,7 @@ class OpenAIProvider:
             "model": model,
             "messages": messages,
             "stream": True,
-            "stream_options": {"include_usage": True},  # Get token counts in final chunk
+            # "stream_options": {"include_usage": True},  # Temporarily disabled - may not work with all models
             "store": False,  # Disable application state storage
         }
         
