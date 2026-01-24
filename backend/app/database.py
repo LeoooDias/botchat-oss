@@ -1159,22 +1159,6 @@ async def apply_weekly_credit_refresh(conn, user: dict) -> int:
         return new_balance
     
     return user.get('credit_balance', 0)
-    
-    Returns:
-        Quota limit for the tier
-    """
-    if not is_paid:
-        return FREE_TIER_QUOTA
-    
-    # For hushhush credits users, the "limit" is their credit balance
-    # This is handled separately in get_user_quota
-    if tier == 'credits':
-        return CREDIT_PACK_SIZE  # Reference value
-    
-    if tier == 'plus':
-        return PLUS_TIER_QUOTA
-    # Default to Pro for all paid users (including 'pro' tier and legacy users without tier)
-    return PRO_TIER_QUOTA
 
 
 async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = None) -> dict:
