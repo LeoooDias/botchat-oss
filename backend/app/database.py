@@ -1003,8 +1003,10 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
 FREE_SIGNED_OUT_QUOTA = 10
 ANONYMOUS_RESET_DAYS = 7  # Weekly reset for anonymous
 
-# Signed-in free users (both brands): 25 lifetime (no reset)
-FREE_TIER_QUOTA = 25
+# Signed-in free users
+FREE_TIER_QUOTA = 25              # Base lifetime allocation
+SIGNED_IN_WEEKLY_REFRESH = 10     # Weekly refresh for hushhush (+10/week)
+WEEKLY_REFRESH_DAYS = 7           # Refresh cycle (weekly)
 
 # Botchat subscription tiers (monthly reset)
 PRO_TIER_QUOTA = 500      # Pro subscribers ($9 CAD/month)
@@ -1383,7 +1385,7 @@ async def get_user_quota_with_credits(
     
     v3.2.0: Brand-aware quota that handles:
     - botchat: Subscription-based (Pro/Plus monthly quotas)
-    - hushhush: Credit-based (one-time purchase, no expiry)
+    - hushhush: Credit-based (one-time purchase, no expiry) + weekly refresh for free
     
     Args:
         provider: OAuth provider
@@ -1437,8 +1439,34 @@ async def get_user_quota_with_credits(
     message_quota_used = user.get("message_quota_used") or 0
     is_lifetime = user.get("is_lifetime_quota", True)  # Default to lifetime for free users
     
-    # For free users with lifetime quota, no period/reset
+    # For free users with lifetime quota
     if not is_paid and is_lifetime:
+        # v3.2.0: Hushhush free users get weekly refresh (+5/week)
+        if brand == "hushhush":
+            # Calculate weekly refreshes since account creation or last reset
+            quota_period_start = user.get("quota_period_start") or user.get("created_at") or datetime.now()
+            weeks_elapsed = max(0, (datetime.now() - quota_period_start).days // WEEKLY_REFRESH_DAYS)
+            
+            # Total allowance = base + (weeks * weekly_refresh)
+            # Cap at reasonable maximum to prevent abuse (e.g., 100 max from refreshes)
+            max_refresh_weeks = 15  # Cap at 75 additional messages from refreshes
+            effective_weeks = min(weeks_elapsed, max_refresh_weeks)
+            total_allowance = FREE_TIER_QUOTA + (effective_weeks * SIGNED_IN_WEEKLY_REFRESH)
+            
+            # Calculate next refresh date
+            next_refresh_at = quota_period_start + timedelta(days=((weeks_elapsed + 1) * WEEKLY_REFRESH_DAYS))
+            
+            return {
+                "used": message_quota_used,
+                "limit": total_allowance,
+                "remaining": max(0, total_allowance - message_quota_used),
+                "period_ends_at": next_refresh_at.isoformat(),  # Next weekly refresh
+                "is_paid": False,
+                "credit_balance": credit_balance,
+                "weekly_refresh": SIGNED_IN_WEEKLY_REFRESH,
+            }
+        
+        # Botchat: pure lifetime cap (no refresh)
         return {
             "used": message_quota_used,
             "limit": limit,
