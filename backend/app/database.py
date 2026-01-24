@@ -1223,7 +1223,7 @@ async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = No
         credit_balance = await apply_weekly_credit_refresh(user, is_anonymous)
     
     # Get credit cap for this user type
-    credit_cap = get_credit_cap_for_user(is_paid, is_anonymous)
+    credit_cap = get_credit_cap_for_user(tier, is_paid, is_anonymous)
     
     return {
         "credit_balance": credit_balance,
@@ -1248,8 +1248,8 @@ async def _initialize_credit_balance(user: dict, is_paid: bool, tier: Optional[s
         return 0
     
     # Calculate initial credits based on user type
-    initial_credits = get_initial_credits_for_user(is_paid, tier, is_anonymous)
-    credit_cap = get_credit_cap_for_user(is_paid, is_anonymous)
+    initial_credits = get_initial_credits_for_user(tier, is_paid, is_anonymous)
+    credit_cap = get_credit_cap_for_user(tier, is_paid, is_anonymous)
     
     # For existing users, deduct their already-used messages from initial credits
     message_quota_used = user.get('message_quota_used', 0) or 0
@@ -1324,7 +1324,7 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
         return {
             "error": "insufficient_credits",
             "credit_balance": current_balance,
-            "credit_cap": get_credit_cap_for_user(is_paid, is_anonymous),
+            "credit_cap": get_credit_cap_for_user(tier, is_paid, is_anonymous),
             "required": amount,
         }
     
@@ -1347,7 +1347,7 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
         return None
     
     new_balance = row['credit_balance']
-    credit_cap = get_credit_cap_for_user(is_paid, is_anonymous)
+    credit_cap = get_credit_cap_for_user(tier, is_paid, is_anonymous)
     
     logger.info(f"Spent {amount} credits: user {user['id']} {current_balance} → {new_balance}")
     
