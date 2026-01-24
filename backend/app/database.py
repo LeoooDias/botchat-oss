@@ -783,6 +783,7 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
     """Get or create an anonymous user by browser fingerprint hash.
 
     V3.0.1: Server-side quota enforcement for anonymous users.
+    V3.2.2: Initialize with credit_balance system (10 credits cap).
 
     PRIVACY: fingerprint is a client-generated SHA-256 hash.
     We cannot reverse it to identify the user.
@@ -815,6 +816,7 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
             SELECT id, oauth_provider, oauth_id, message_quota_used,
                    quota_period_start, is_anonymous, anonymous_fingerprint,
                    subscription_status, subscription_tier, total_messages,
+                   credit_balance, credit_cap, last_credit_refresh,
                    created_at, updated_at, account_status
             FROM users
             WHERE anonymous_fingerprint = $1
@@ -826,7 +828,7 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
             # Found existing user (either still anonymous or promoted to authenticated)
             return dict(row)
 
-        # Create new anonymous user
+        # Create new anonymous user with credit_balance initialized
         row = await conn.fetchrow(
             """
             INSERT INTO users (
@@ -835,18 +837,24 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
                 is_anonymous,
                 anonymous_fingerprint,
                 message_quota_used,
-                total_messages
+                total_messages,
+                credit_balance,
+                credit_cap,
+                last_credit_refresh,
+                credits_earned_total
             )
-            VALUES ('anonymous', $1, TRUE, $1, 0, 0)
+            VALUES ('anonymous', $1, TRUE, $1, 0, 0, $2, $2, NOW(), $2)
             RETURNING id, oauth_provider, oauth_id, message_quota_used,
                       quota_period_start, is_anonymous, anonymous_fingerprint,
                       subscription_status, subscription_tier, total_messages,
+                      credit_balance, credit_cap, last_credit_refresh,
                       created_at, updated_at, account_status
             """,
-            fingerprint
+            fingerprint,
+            ANONYMOUS_CREDIT_CAP  # 10 credits
         )
 
-        logger.info(f"Created anonymous user: fingerprint={fingerprint[:16]}... (db_id={row['id']})")
+        logger.info(f"Created anonymous user: fingerprint={fingerprint[:16]}... (db_id={row['id']}, credits={ANONYMOUS_CREDIT_CAP})")
         return dict(row)
 
 
@@ -1016,38 +1024,141 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
 
 
 # -----------------------------
-# Quota Management
+# Credit Balance System (v3.2.2)
 # -----------------------------
+# 
+# Credits are now a decreasing balance, not used/limit.
+# 
+# Credit Rules:
+# - Anonymous users: 10 credits, +10/week (rolling), cap at 10
+# - Free signed-in: 25 credits, +10/week (rolling), cap at 25
+# - Pro subscribers: +250/month on renewal, cap at 2,000
+# - Plus subscribers: +1,000/month on renewal, cap at 2,000
+# - Credits never expire
+#
+# All references to "messages" are now "credits"
 
-# Quota limits (v3.2.0 - brand-aware pricing)
-# These are default values; actual limits come from brand config via API header
+# Credit caps per user type
+ANONYMOUS_CREDIT_CAP = 10
+FREE_SIGNED_IN_CREDIT_CAP = 25
+PAID_CREDIT_CAP = 2000
 
-# Anonymous users (both brands): 10/week
-FREE_SIGNED_OUT_QUOTA = 10
-ANONYMOUS_RESET_DAYS = 7  # Weekly reset for anonymous
+# Credit grants
+ANONYMOUS_INITIAL_CREDITS = 10
+FREE_SIGNED_IN_INITIAL_CREDITS = 25
+WEEKLY_CREDIT_REFRESH = 10  # +10/week for anonymous and free signed-in
+PRO_MONTHLY_CREDITS = 250   # +250/month for Pro
+PLUS_MONTHLY_CREDITS = 1000 # +1000/month for Plus
 
-# Signed-in free users
-FREE_TIER_QUOTA = 25              # Base lifetime allocation
-SIGNED_IN_WEEKLY_REFRESH = 10     # Weekly refresh for hushhush (+10/week)
-WEEKLY_REFRESH_DAYS = 7           # Refresh cycle (weekly)
+# Refresh timing
+WEEKLY_REFRESH_DAYS = 7
 
-# Botchat subscription tiers (monthly reset)
-PRO_TIER_QUOTA = 500      # Pro subscribers ($9 CAD/month)
-PLUS_TIER_QUOTA = 1000    # Plus subscribers ($19 CAD/month)
-
-# Hushhush credits (one-time purchase, no expiry)
-CREDIT_PACK_SIZE = 250    # Messages per $5 USD purchase
-
-QUOTA_PERIOD_DAYS = 30    # Rolling period for subscription users
+# Legacy constants (kept for backwards compatibility during migration)
+FREE_SIGNED_OUT_QUOTA = ANONYMOUS_INITIAL_CREDITS
+FREE_TIER_QUOTA = FREE_SIGNED_IN_INITIAL_CREDITS
 
 
-def get_quota_limit_for_tier(tier: Optional[str], is_paid: bool, brand: str = "botchat") -> int:
-    """Get quota limit based on subscription tier and brand.
+def get_credit_cap_for_user(tier: Optional[str], is_paid: bool, is_anonymous: bool) -> int:
+    """Get the credit cap for a user based on their status.
     
     Args:
-        tier: Subscription tier ('pro', 'plus', 'credits', or None)
-        is_paid: Whether user has active subscription or credits
-        brand: Brand context ('botchat' or 'hushhush')
+        tier: Subscription tier ('pro', 'plus', or None)
+        is_paid: Whether user has active subscription
+        is_anonymous: Whether user is anonymous
+    
+    Returns:
+        Maximum credit balance allowed
+    """
+    if is_anonymous:
+        return ANONYMOUS_CREDIT_CAP
+    if is_paid:
+        return PAID_CREDIT_CAP
+    return FREE_SIGNED_IN_CREDIT_CAP
+
+
+def get_initial_credits_for_user(tier: Optional[str], is_paid: bool, is_anonymous: bool) -> int:
+    """Get initial credits for a new user.
+    
+    Args:
+        tier: Subscription tier ('pro', 'plus', or None)
+        is_paid: Whether user has active subscription
+        is_anonymous: Whether user is anonymous
+    
+    Returns:
+        Initial credit balance
+    """
+    if is_anonymous:
+        return ANONYMOUS_INITIAL_CREDITS
+    if is_paid:
+        if tier == 'plus':
+            return min(PLUS_MONTHLY_CREDITS, PAID_CREDIT_CAP)
+        return min(PRO_MONTHLY_CREDITS, PAID_CREDIT_CAP)
+    return FREE_SIGNED_IN_INITIAL_CREDITS
+
+
+async def apply_weekly_credit_refresh(conn, user: dict) -> int:
+    """Apply weekly credit refresh if eligible.
+    
+    Anonymous and free signed-in users get +10 credits per week (rolling).
+    
+    Args:
+        conn: Database connection
+        user: User record dict
+    
+    Returns:
+        New credit balance after refresh (or current if no refresh needed)
+    """
+    is_anonymous = user.get('is_anonymous', False)
+    is_paid = user.get('subscription_status') in ('active', 'trialing')
+    
+    # Paid users don't get weekly refresh
+    if is_paid:
+        return user.get('credit_balance', 0)
+    
+    # Check if refresh is due
+    last_refresh = user.get('last_credit_refresh')
+    if last_refresh is None:
+        # First time - set baseline but don't add credits (they got initial credits)
+        await conn.execute(
+            """
+            UPDATE users SET last_credit_refresh = NOW()
+            WHERE id = $1
+            """,
+            user['id']
+        )
+        return user.get('credit_balance', 0)
+    
+    # Calculate time since last refresh
+    now = datetime.now()
+    if isinstance(last_refresh, str):
+        last_refresh = datetime.fromisoformat(last_refresh.replace('Z', '+00:00'))
+    
+    days_since_refresh = (now - last_refresh.replace(tzinfo=None)).days
+    
+    if days_since_refresh >= WEEKLY_REFRESH_DAYS:
+        # Apply refresh
+        credit_cap = ANONYMOUS_CREDIT_CAP if is_anonymous else FREE_SIGNED_IN_CREDIT_CAP
+        current_balance = user.get('credit_balance', 0)
+        new_balance = min(current_balance + WEEKLY_CREDIT_REFRESH, credit_cap)
+        
+        # Update database
+        await conn.execute(
+            """
+            UPDATE users 
+            SET credit_balance = $2,
+                last_credit_refresh = NOW(),
+                credits_earned_total = COALESCE(credits_earned_total, 0) + $3
+            WHERE id = $1
+            """,
+            user['id'],
+            new_balance,
+            new_balance - current_balance  # Actual credits added
+        )
+        
+        logger.info(f"Weekly credit refresh: user {user['id']} {current_balance} → {new_balance}")
+        return new_balance
+    
+    return user.get('credit_balance', 0)
     
     Returns:
         Quota limit for the tier
@@ -1067,24 +1178,42 @@ def get_quota_limit_for_tier(tier: Optional[str], is_paid: bool, brand: str = "b
 
 
 async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = None) -> dict:
-    """Get user's message quota status.
+    """Get user's credit balance status.
+    
+    V3.2.2: Simplified credit balance system.
+    - Returns credit_balance directly (no used/limit calculation)
+    - Applies weekly refresh for free users if 7+ days passed
+    - Paid users get monthly credits via Stripe webhook
     
     Returns:
-    - used: messages used this period
-    - limit: total allowed for this period (tier-based)
-    - remaining: messages remaining
-    - period_ends_at: when current period ends
+    - credit_balance: current available credits
+    - credit_cap: maximum credits user can accumulate
     - is_paid: whether user has paid subscription
+    - tier: subscription tier ('pro', 'plus', or None)
+    
+    Legacy fields (for backward compatibility during transition):
+    - used: 0 (deprecated)
+    - limit: credit_cap (deprecated)
+    - remaining: credit_balance (deprecated)
     """
     user = await get_user_for_billing(provider, oauth_id, email)
     
+    is_anonymous = provider == 'anonymous'
+    
     if not user:
+        # New user - return initial credits based on type
+        initial_credits = ANONYMOUS_INITIAL_CREDITS if is_anonymous else FREE_SIGNED_IN_INITIAL_CREDITS
+        credit_cap = ANONYMOUS_CREDIT_CAP if is_anonymous else FREE_SIGNED_IN_CREDIT_CAP
         return {
-            "used": 0,
-            "limit": FREE_TIER_QUOTA,
-            "remaining": FREE_TIER_QUOTA,
-            "period_ends_at": None,
+            "credit_balance": initial_credits,
+            "credit_cap": credit_cap,
             "is_paid": False,
+            "tier": None,
+            # Legacy fields
+            "used": 0,
+            "limit": credit_cap,
+            "remaining": initial_credits,
+            "period_ends_at": None,
         }
     
     # Determine if paid user
@@ -1098,58 +1227,85 @@ async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = No
         is_paid = False
         tier = None
     
-    # Determine quota limit based on tier
-    limit = get_quota_limit_for_tier(tier, is_paid)
+    # Get credit balance (may be refreshed)
+    credit_balance = user.get('credit_balance')
     
-    # Get quota period info
-    quota_period_start = user.get("quota_period_start") or datetime.now()
-    message_quota_used = user.get("message_quota_used") or 0
+    # If credit_balance is None, this user hasn't been migrated yet
+    # Initialize based on their current state
+    if credit_balance is None:
+        credit_balance = await _initialize_credit_balance(user, is_paid, tier, is_anonymous)
+    elif not is_paid:
+        # Apply weekly refresh for non-paid users (anonymous + free signed-in)
+        credit_balance = await apply_weekly_credit_refresh(user, is_anonymous)
     
-    # Check if period needs reset
-    # For paid users: reset based on subscription_ends_at (next billing cycle)
-    # For free users: 30-day rolling period from quota_period_start
-    period_ends_at = None
-    should_reset = False
-    
-    if is_paid and sub_ends_at:
-        # Paid users: period aligns with subscription billing cycle
-        period_ends_at = sub_ends_at
-        # Check if we're past the subscription end (renewed)
-        if datetime.now() > sub_ends_at:
-            should_reset = True
-    else:
-        # Free users: 30-day rolling period
-        period_ends_at = quota_period_start + timedelta(days=QUOTA_PERIOD_DAYS)
-        if datetime.now() > period_ends_at:
-            should_reset = True
-    
-    # If period expired, reset quota (will be committed on next increment)
-    if should_reset:
-        message_quota_used = 0
-    
-    remaining = max(0, limit - message_quota_used)
+    # Get credit cap for this user type
+    credit_cap = get_credit_cap_for_user(is_paid, is_anonymous)
     
     return {
-        "used": message_quota_used,
-        "limit": limit,
-        "remaining": remaining,
-        "period_ends_at": period_ends_at.isoformat() if period_ends_at else None,
+        "credit_balance": credit_balance,
+        "credit_cap": credit_cap,
         "is_paid": is_paid,
+        "tier": tier,
+        # Legacy fields for backward compatibility
+        "used": 0,
+        "limit": credit_cap,
+        "remaining": credit_balance,
+        "period_ends_at": sub_ends_at.isoformat() if sub_ends_at else None,
     }
 
 
-async def increment_quota(provider: str, oauth_id: str, count: int = 1) -> Optional[dict]:
-    """Increment user's message quota usage.
+async def _initialize_credit_balance(user: dict, is_paid: bool, tier: Optional[str], is_anonymous: bool) -> int:
+    """Initialize credit_balance for users who haven't been migrated yet.
     
-    Also handles period reset if needed.
+    Called when credit_balance is NULL (pre-v3.2.2 users).
+    Converts existing message_quota_used to credit_balance.
+    """
+    if not _pool:
+        return 0
+    
+    # Calculate initial credits based on user type
+    initial_credits = get_initial_credits_for_user(is_paid, tier, is_anonymous)
+    credit_cap = get_credit_cap_for_user(is_paid, is_anonymous)
+    
+    # For existing users, deduct their already-used messages from initial credits
+    message_quota_used = user.get('message_quota_used', 0) or 0
+    credit_balance = max(0, initial_credits - message_quota_used)
+    
+    # Cap at the maximum
+    credit_balance = min(credit_balance, credit_cap)
+    
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE users 
+            SET credit_balance = $2,
+                credit_cap = $3,
+                last_credit_refresh = NOW(),
+                credits_earned_total = $2,
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            user['id'],
+            credit_balance,
+            credit_cap
+        )
+    
+    logger.info(f"Initialized credit_balance for user {user['id']}: {credit_balance} (was {message_quota_used} used)")
+    return credit_balance
+
+
+async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Optional[dict]:
+    """Spend credits from user's balance.
+    
+    V3.2.2: Decrements credit_balance instead of incrementing quota_used.
     
     Args:
         provider: OAuth provider
         oauth_id: OAuth user ID
-        count: Number of messages to add (default 1)
+        amount: Number of credits to spend (default 1)
     
     Returns:
-        Updated quota info, or None if user not found
+        Updated credit info, or None if user not found or insufficient credits
     """
     if not _pool:
         return None
@@ -1158,98 +1314,132 @@ async def increment_quota(provider: str, oauth_id: str, count: int = 1) -> Optio
     if not user:
         return None
     
-    # Determine if paid user and tier
+    is_anonymous = provider == 'anonymous'
+    
+    # Determine if paid user
     status = user.get("subscription_status", "none")
     is_paid = status in ("trialing", "active")
-    tier = user.get("subscription_tier")  # 'pro', 'plus', or None
+    tier = user.get("subscription_tier")
     sub_ends_at = user.get("subscription_ends_at")
     if sub_ends_at and datetime.now() > sub_ends_at:
         is_paid = False
         tier = None
     
-    # Check if period needs reset
-    quota_period_start = user.get("quota_period_start") or datetime.now()
+    # Get current balance (with potential weekly refresh for free users)
+    current_balance = user.get('credit_balance')
+    if current_balance is None:
+        # User hasn't been migrated yet - initialize first
+        current_balance = await _initialize_credit_balance(user, is_paid, tier, is_anonymous)
+    elif not is_paid:
+        # Apply weekly refresh for non-paid users before spending
+        current_balance = await apply_weekly_credit_refresh(user, is_anonymous)
     
-    should_reset = False
-    new_period_start = quota_period_start
+    # Check if user has enough credits
+    if current_balance < amount:
+        logger.warning(f"Insufficient credits: user {user['id']} has {current_balance}, needs {amount}")
+        return {
+            "error": "insufficient_credits",
+            "credit_balance": current_balance,
+            "credit_cap": get_credit_cap_for_user(is_paid, is_anonymous),
+            "required": amount,
+        }
     
-    if is_paid and sub_ends_at:
-        # Paid: check if past subscription end (billing renewed)
-        if datetime.now() > sub_ends_at:
-            should_reset = True
-            new_period_start = datetime.now()
-    else:
-        # Free: 30-day rolling period
-        period_ends_at = quota_period_start + timedelta(days=QUOTA_PERIOD_DAYS)
-        if datetime.now() > period_ends_at:
-            should_reset = True
-            new_period_start = datetime.now()
-    
+    # Deduct credits
     async with _pool.acquire() as conn:
-        if should_reset:
-            # Reset quota and start new period
-            row = await conn.fetchrow(
-                """
-                UPDATE users
-                SET message_quota_used = $3,
-                    quota_period_start = $4,
-                    updated_at = NOW()
-                WHERE oauth_provider = $1 AND oauth_id = $2
-                RETURNING message_quota_used, quota_period_start
-                """,
-                provider, oauth_id, count, new_period_start
-            )
-        else:
-            # Increment existing quota
-            row = await conn.fetchrow(
-                """
-                UPDATE users
-                SET message_quota_used = COALESCE(message_quota_used, 0) + $3,
-                    total_messages = COALESCE(total_messages, 0) + $3,
-                    updated_at = NOW()
-                WHERE oauth_provider = $1 AND oauth_id = $2
-                RETURNING message_quota_used, quota_period_start, total_messages
-                """,
-                provider, oauth_id, count
-            )
+        row = await conn.fetchrow(
+            """
+            UPDATE users
+            SET credit_balance = credit_balance - $3,
+                credits_spent_total = COALESCE(credits_spent_total, 0) + $3,
+                total_messages = COALESCE(total_messages, 0) + $3,
+                updated_at = NOW()
+            WHERE oauth_provider = $1 AND oauth_id = $2
+            RETURNING credit_balance, credits_spent_total, total_messages
+            """,
+            provider, oauth_id, amount
+        )
     
     if not row:
         return None
     
-    limit = get_quota_limit_for_tier(tier, is_paid)
-    used = row['message_quota_used']
+    new_balance = row['credit_balance']
+    credit_cap = get_credit_cap_for_user(is_paid, is_anonymous)
+    
+    logger.info(f"Spent {amount} credits: user {user['id']} {current_balance} → {new_balance}")
     
     return {
-        "used": used,
-        "limit": limit,
-        "remaining": max(0, limit - used),
+        "credit_balance": new_balance,
+        "credit_cap": credit_cap,
         "is_paid": is_paid,
         "total_messages": row.get('total_messages', 0),
+        # Legacy fields for backward compatibility
+        "used": 0,
+        "limit": credit_cap,
+        "remaining": new_balance,
     }
 
 
-async def reset_user_quota(stripe_customer_id: str) -> Optional[dict]:
-    """Reset user's quota when subscription renews.
+# Keep increment_quota as alias for backward compatibility during transition
+async def increment_quota(provider: str, oauth_id: str, count: int = 1) -> Optional[dict]:
+    """DEPRECATED: Use spend_credits() instead.
     
-    Called from Stripe webhook when subscription is renewed.
-    NOTE: Does NOT reset total_messages (lifetime count).
+    Kept for backward compatibility during v3.2.2 transition.
+    """
+    return await spend_credits(provider, oauth_id, count)
+
+
+async def add_subscription_credits(stripe_customer_id: str, tier: str) -> Optional[dict]:
+    """Add monthly credits when subscription renews.
+    
+    V3.2.2: Called from Stripe webhook on subscription renewal.
+    Adds credits based on tier (Pro: 250, Plus: 1000).
+    Credits are ADDITIVE, not resetting. Capped at 2000.
+    
+    Args:
+        stripe_customer_id: Stripe customer ID
+        tier: Subscription tier ('pro' or 'plus')
+    
+    Returns:
+        Updated user info with new balance, or None if user not found
     """
     if not _pool:
         return None
+    
+    # Determine credits to add based on tier
+    if tier == 'plus':
+        credits_to_add = PLUS_MONTHLY_CREDITS  # 1000
+    else:
+        credits_to_add = PRO_MONTHLY_CREDITS   # 250
     
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             UPDATE users
-            SET message_quota_used = 0,
-                quota_period_start = NOW(),
+            SET credit_balance = LEAST(COALESCE(credit_balance, 0) + $2, $3),
+                credit_cap = $3,
+                credits_earned_total = COALESCE(credits_earned_total, 0) + $2,
                 updated_at = NOW()
             WHERE stripe_customer_id = $1
-            RETURNING id, message_quota_used, quota_period_start, total_messages
+            RETURNING id, credit_balance, credit_cap, credits_earned_total, total_messages
             """,
-            stripe_customer_id
+            stripe_customer_id,
+            credits_to_add,
+            PAID_CREDIT_CAP  # 2000
         )
+        
+        if row:
+            logger.info(f"Added {credits_to_add} subscription credits ({tier}): user {row['id']} → {row['credit_balance']}")
+        
         return dict(row) if row else None
+
+
+# Keep reset_user_quota as alias for backward compatibility
+async def reset_user_quota(stripe_customer_id: str) -> Optional[dict]:
+    """DEPRECATED: Use add_subscription_credits() instead.
+    
+    For backward compatibility, defaults to 'pro' tier (250 credits).
+    """
+    return await add_subscription_credits(stripe_customer_id, 'pro')
 
 
 # -----------------------------
