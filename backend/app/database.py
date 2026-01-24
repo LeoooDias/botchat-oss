@@ -516,8 +516,12 @@ async def _create_tables():
                 messages_sent INT DEFAULT 0,
                 summarize_used INT DEFAULT 0,
                 export_used INT DEFAULT 0,
-                deep_mode_used INT DEFAULT 0,
+                study_mode_used INT DEFAULT 0,
                 return_24h INT DEFAULT 0,
+                -- Mode-specific message counts (added v3.2.1)
+                chat_messages INT DEFAULT 0,
+                ask_messages INT DEFAULT 0,
+                study_messages INT DEFAULT 0,
                 return_48h INT DEFAULT 0,
                 checkout_started INT DEFAULT 0,
                 payment_completed INT DEFAULT 0,
@@ -527,7 +531,26 @@ async def _create_tables():
                 gemini_input_tokens BIGINT DEFAULT 0,
                 gemini_output_tokens BIGINT DEFAULT 0,
                 anthropic_input_tokens BIGINT DEFAULT 0,
-                anthropic_output_tokens BIGINT DEFAULT 0
+                anthropic_output_tokens BIGINT DEFAULT 0,
+                -- Mode-specific token tracking (added v3.2.1)
+                openai_chat_input_tokens BIGINT DEFAULT 0,
+                openai_chat_output_tokens BIGINT DEFAULT 0,
+                openai_ask_input_tokens BIGINT DEFAULT 0,
+                openai_ask_output_tokens BIGINT DEFAULT 0,
+                openai_study_input_tokens BIGINT DEFAULT 0,
+                openai_study_output_tokens BIGINT DEFAULT 0,
+                gemini_chat_input_tokens BIGINT DEFAULT 0,
+                gemini_chat_output_tokens BIGINT DEFAULT 0,
+                gemini_ask_input_tokens BIGINT DEFAULT 0,
+                gemini_ask_output_tokens BIGINT DEFAULT 0,
+                gemini_study_input_tokens BIGINT DEFAULT 0,
+                gemini_study_output_tokens BIGINT DEFAULT 0,
+                anthropic_chat_input_tokens BIGINT DEFAULT 0,
+                anthropic_chat_output_tokens BIGINT DEFAULT 0,
+                anthropic_ask_input_tokens BIGINT DEFAULT 0,
+                anthropic_ask_output_tokens BIGINT DEFAULT 0,
+                anthropic_study_input_tokens BIGINT DEFAULT 0,
+                anthropic_study_output_tokens BIGINT DEFAULT 0
             );
         """)
         
@@ -606,7 +629,7 @@ async def get_user_by_oauth(provider: str, oauth_id: str) -> Optional[dict]:
                    subscription_tier,
                    message_quota_used, quota_period_start,
                    total_messages, recovery_email_hash, recovery_email_set_at,
-                   account_status,
+                   account_status, brand,
                    created_at, updated_at
             FROM users
             WHERE oauth_provider = $1 AND oauth_id = $2
