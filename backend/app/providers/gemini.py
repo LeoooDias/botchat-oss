@@ -433,6 +433,25 @@ class GeminiProvider:
         """
         parts: List[Any] = []
         
+        # Mime types that Gemini doesn't support but are text-based
+        # These should be converted to text/plain
+        TEXT_BASED_MIMES_TO_CONVERT = {
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/x-javascript",
+            "application/typescript",
+            "application/x-yaml",
+            "application/yaml",
+            "application/toml",
+            "application/x-sh",
+            "application/x-python",
+            "text/markdown",
+            "text/x-markdown",
+            "text/csv",
+            "text/xml",
+        }
+        
         # Add file attachments first (if any)
         if file_data:
             for fd in file_data:
@@ -451,6 +470,12 @@ class GeminiProvider:
                         else:
                             logger.debug("Added image (%s, %d bytes, EXIF stripped)",
                                        mime_type, len(file_bytes))
+                    
+                    # Convert unsupported text-based mime types to text/plain
+                    # Gemini rejects application/json and similar, but handles text/plain fine
+                    if mime_type in TEXT_BASED_MIMES_TO_CONVERT:
+                        logger.debug("Converting mime type %s to text/plain for Gemini compatibility", mime_type)
+                        mime_type = "text/plain"
                     
                     # PRIVACY: Use inline data (from_bytes), NOT file URIs
                     # This ensures file data is ephemeral and not persisted
