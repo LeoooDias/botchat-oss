@@ -996,26 +996,45 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
 # Quota Management
 # -----------------------------
 
-# Quota limits (v3.0.0 - tier-based)
-FREE_SIGNED_OUT_QUOTA = 20    # messages total for anonymous users (v3.0.1)
-FREE_TIER_QUOTA = 100         # messages per month for free signed-in users
-PRO_TIER_QUOTA = 1000         # messages per month for Pro subscribers ($8/month)
-PLUS_TIER_QUOTA = 2000        # messages per month for Plus subscribers ($19/month)
-QUOTA_PERIOD_DAYS = 30        # rolling period for free users
+# Quota limits (v3.2.0 - brand-aware pricing)
+# These are default values; actual limits come from brand config via API header
+
+# Anonymous users (both brands): 10/week
+FREE_SIGNED_OUT_QUOTA = 10
+ANONYMOUS_RESET_DAYS = 7  # Weekly reset for anonymous
+
+# Signed-in free users (both brands): 25 lifetime (no reset)
+FREE_TIER_QUOTA = 25
+
+# Botchat subscription tiers (monthly reset)
+PRO_TIER_QUOTA = 500      # Pro subscribers ($9 CAD/month)
+PLUS_TIER_QUOTA = 1000    # Plus subscribers ($19 CAD/month)
+
+# Hushhush credits (one-time purchase, no expiry)
+CREDIT_PACK_SIZE = 250    # Messages per $5 USD purchase
+
+QUOTA_PERIOD_DAYS = 30    # Rolling period for subscription users
 
 
-def get_quota_limit_for_tier(tier: Optional[str], is_paid: bool) -> int:
-    """Get quota limit based on subscription tier.
+def get_quota_limit_for_tier(tier: Optional[str], is_paid: bool, brand: str = "botchat") -> int:
+    """Get quota limit based on subscription tier and brand.
     
     Args:
-        tier: Subscription tier ('pro', 'plus', or None)
-        is_paid: Whether user has active subscription
+        tier: Subscription tier ('pro', 'plus', 'credits', or None)
+        is_paid: Whether user has active subscription or credits
+        brand: Brand context ('botchat' or 'hushhush')
     
     Returns:
         Quota limit for the tier
     """
     if not is_paid:
         return FREE_TIER_QUOTA
+    
+    # For hushhush credits users, the "limit" is their credit balance
+    # This is handled separately in get_user_quota
+    if tier == 'credits':
+        return CREDIT_PACK_SIZE  # Reference value
+    
     if tier == 'plus':
         return PLUS_TIER_QUOTA
     # Default to Pro for all paid users (including 'pro' tier and legacy users without tier)
@@ -1206,6 +1225,250 @@ async def reset_user_quota(stripe_customer_id: str) -> Optional[dict]:
             stripe_customer_id
         )
         return dict(row) if row else None
+
+
+# -----------------------------
+# Credit System (v3.2.0 - hushhush)
+# -----------------------------
+
+async def get_credit_balance(provider: str, oauth_id: str) -> int:
+    """Get user's credit balance.
+    
+    Args:
+        provider: OAuth provider
+        oauth_id: OAuth user ID (hashed)
+    
+    Returns:
+        Credit balance (0 if no credits)
+    """
+    if not _pool:
+        return 0
+    
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT COALESCE(credit_balance, 0) as credit_balance
+            FROM users
+            WHERE oauth_provider = $1 AND oauth_id = $2
+            """,
+            provider, oauth_id
+        )
+        return row['credit_balance'] if row else 0
+
+
+async def add_credits(provider: str, oauth_id: str, amount: int) -> Optional[dict]:
+    """Add credits to a user's balance.
+    
+    Called after successful Stripe credit pack purchase.
+    
+    Args:
+        provider: OAuth provider
+        oauth_id: OAuth user ID (hashed)
+        amount: Number of credits to add
+    
+    Returns:
+        Updated user info with new balance, or None if user not found
+    """
+    if not _pool:
+        return None
+    
+    logger.info("Adding %d credits to user %s:%s...", amount, provider, oauth_id[:16])
+    
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE users
+            SET credit_balance = COALESCE(credit_balance, 0) + $3,
+                updated_at = NOW()
+            WHERE oauth_provider = $1 AND oauth_id = $2
+            RETURNING id, credit_balance
+            """,
+            provider, oauth_id, amount
+        )
+        
+        if row:
+            logger.info("Credits added. New balance: %d", row['credit_balance'])
+            return dict(row)
+        return None
+
+
+async def add_credits_by_stripe_customer(stripe_customer_id: str, amount: int) -> Optional[dict]:
+    """Add credits to a user's balance by Stripe customer ID.
+    
+    Called from Stripe webhook after successful credit pack purchase.
+    
+    Args:
+        stripe_customer_id: Stripe customer ID
+        amount: Number of credits to add
+    
+    Returns:
+        Updated user info with new balance, or None if user not found
+    """
+    if not _pool:
+        return None
+    
+    logger.info("Adding %d credits to Stripe customer %s", amount, stripe_customer_id)
+    
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE users
+            SET credit_balance = COALESCE(credit_balance, 0) + $2,
+                updated_at = NOW()
+            WHERE stripe_customer_id = $1
+            RETURNING id, credit_balance, oauth_provider, oauth_id
+            """,
+            stripe_customer_id, amount
+        )
+        
+        if row:
+            logger.info("Credits added. New balance: %d for user id=%d", row['credit_balance'], row['id'])
+            return dict(row)
+        return None
+
+
+async def deduct_credits(provider: str, oauth_id: str, amount: int = 1) -> Optional[dict]:
+    """Deduct credits from a user's balance.
+    
+    Called when a message is sent by a hushhush credits user.
+    
+    Args:
+        provider: OAuth provider
+        oauth_id: OAuth user ID (hashed)
+        amount: Number of credits to deduct (default 1)
+    
+    Returns:
+        Updated info with new balance, or None if user not found or insufficient credits
+    """
+    if not _pool:
+        return None
+    
+    async with _pool.acquire() as conn:
+        # First check if user has enough credits
+        row = await conn.fetchrow(
+            """
+            SELECT credit_balance FROM users
+            WHERE oauth_provider = $1 AND oauth_id = $2
+            """,
+            provider, oauth_id
+        )
+        
+        if not row or (row['credit_balance'] or 0) < amount:
+            logger.warning("Insufficient credits for %s:%s... (balance: %d, requested: %d)",
+                         provider, oauth_id[:16], row['credit_balance'] if row else 0, amount)
+            return None
+        
+        # Deduct credits and increment total_messages
+        row = await conn.fetchrow(
+            """
+            UPDATE users
+            SET credit_balance = credit_balance - $3,
+                total_messages = COALESCE(total_messages, 0) + $3,
+                updated_at = NOW()
+            WHERE oauth_provider = $1 AND oauth_id = $2
+            RETURNING id, credit_balance, total_messages
+            """,
+            provider, oauth_id, amount
+        )
+        
+        return dict(row) if row else None
+
+
+async def get_user_quota_with_credits(
+    provider: str, 
+    oauth_id: str, 
+    brand: str = "botchat"
+) -> dict:
+    """Get user's quota status, handling both subscription and credits models.
+    
+    v3.2.0: Brand-aware quota that handles:
+    - botchat: Subscription-based (Pro/Plus monthly quotas)
+    - hushhush: Credit-based (one-time purchase, no expiry)
+    
+    Args:
+        provider: OAuth provider
+        oauth_id: OAuth user ID (hashed)
+        brand: Brand context ('botchat' or 'hushhush')
+    
+    Returns:
+        Quota info dict with used, limit, remaining, etc.
+    """
+    user = await get_user_for_billing(provider, oauth_id, None)
+    
+    if not user:
+        return {
+            "used": 0,
+            "limit": FREE_TIER_QUOTA,
+            "remaining": FREE_TIER_QUOTA,
+            "period_ends_at": None,
+            "is_paid": False,
+            "credit_balance": 0,
+        }
+    
+    # Check if user has credits (hushhush model)
+    credit_balance = user.get("credit_balance") or 0
+    
+    if brand == "hushhush" and credit_balance > 0:
+        # Credits model: user has purchased credits
+        return {
+            "used": user.get("total_messages") or 0,  # Lifetime total for reference
+            "limit": credit_balance,  # Current balance is the "limit"
+            "remaining": credit_balance,
+            "period_ends_at": None,  # Credits don't expire
+            "is_paid": True,
+            "credit_balance": credit_balance,
+        }
+    
+    # Fall back to subscription model (botchat) or free tier
+    status = user.get("subscription_status", "none")
+    is_paid = status in ("trialing", "active")
+    tier = user.get("subscription_tier")
+    
+    # Check if subscription has ended
+    sub_ends_at = user.get("subscription_ends_at")
+    if sub_ends_at and datetime.now() > sub_ends_at:
+        is_paid = False
+        tier = None
+    
+    # Determine quota limit
+    limit = get_quota_limit_for_tier(tier, is_paid, brand)
+    
+    # Get quota usage
+    message_quota_used = user.get("message_quota_used") or 0
+    is_lifetime = user.get("is_lifetime_quota", True)  # Default to lifetime for free users
+    
+    # For free users with lifetime quota, no period/reset
+    if not is_paid and is_lifetime:
+        return {
+            "used": message_quota_used,
+            "limit": limit,
+            "remaining": max(0, limit - message_quota_used),
+            "period_ends_at": None,  # Lifetime, no reset
+            "is_paid": False,
+            "credit_balance": credit_balance,
+        }
+    
+    # For paid users, handle period reset
+    quota_period_start = user.get("quota_period_start") or datetime.now()
+    period_ends_at = None
+    
+    if is_paid and sub_ends_at:
+        period_ends_at = sub_ends_at
+        if datetime.now() > sub_ends_at:
+            message_quota_used = 0  # Would be reset
+    else:
+        period_ends_at = quota_period_start + timedelta(days=QUOTA_PERIOD_DAYS)
+        if datetime.now() > period_ends_at:
+            message_quota_used = 0  # Would be reset
+    
+    return {
+        "used": message_quota_used,
+        "limit": limit,
+        "remaining": max(0, limit - message_quota_used),
+        "period_ends_at": period_ends_at.isoformat() if period_ends_at else None,
+        "is_paid": is_paid,
+        "credit_balance": credit_balance,
+    }
 
 
 # -----------------------------
