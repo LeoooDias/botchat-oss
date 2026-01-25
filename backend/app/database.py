@@ -42,6 +42,29 @@ class AccountDeletedException(Exception):
     pass
 
 
+# =============================================================================
+# Credit System Constants (v3.2.2)
+# =============================================================================
+# Credit caps per user type
+ANONYMOUS_CREDIT_CAP = 10
+FREE_SIGNED_IN_CREDIT_CAP = 25
+PAID_CREDIT_CAP = 2000
+
+# Credit grants
+ANONYMOUS_INITIAL_CREDITS = 10
+FREE_SIGNED_IN_INITIAL_CREDITS = 25
+WEEKLY_CREDIT_REFRESH = 10  # +10/week for anonymous and free signed-in
+PRO_MONTHLY_CREDITS = 250   # +250/month for Pro
+PLUS_MONTHLY_CREDITS = 1000 # +1000/month for Plus
+
+# Refresh timing
+WEEKLY_REFRESH_DAYS = 7
+
+# Legacy constants (kept for backwards compatibility during migration)
+FREE_SIGNED_OUT_QUOTA = ANONYMOUS_INITIAL_CREDITS
+FREE_TIER_QUOTA = FREE_SIGNED_IN_INITIAL_CREDITS
+
+
 # GCP project for Secrets Manager (optional)
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "")
 
@@ -768,18 +791,22 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None,
     
     # No existing user and no active tombstone - create new
     # NO EMAIL STORED - anonymous by design
+    # V3.2.2: Initialize with credit_balance for new signed-in users (25 credits)
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO users (oauth_provider, oauth_id, total_messages, brand)
-            VALUES ($1, $2, 0, $3)
+            INSERT INTO users (oauth_provider, oauth_id, total_messages, brand,
+                               credit_balance, credit_cap, last_credit_refresh)
+            VALUES ($1, $2, 0, $3, $4, $5, NOW())
             RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                       subscription_status, subscription_id, subscription_ends_at,
                       message_quota_used, quota_period_start,
                       total_messages, recovery_email_hash, recovery_email_set_at,
+                      credit_balance, credit_cap, last_credit_refresh,
                       created_at, updated_at, brand
             """,
-            provider, oauth_id, brand
+            provider, oauth_id, brand, 
+            FREE_SIGNED_IN_INITIAL_CREDITS, FREE_SIGNED_IN_CREDIT_CAP
         )
         return dict(row)
 
@@ -1042,25 +1069,8 @@ async def get_subscription_status(provider: str, oauth_id: str, email: Optional[
 # - Credits never expire
 #
 # All references to "messages" are now "credits"
-
-# Credit caps per user type
-ANONYMOUS_CREDIT_CAP = 10
-FREE_SIGNED_IN_CREDIT_CAP = 25
-PAID_CREDIT_CAP = 2000
-
-# Credit grants
-ANONYMOUS_INITIAL_CREDITS = 10
-FREE_SIGNED_IN_INITIAL_CREDITS = 25
-WEEKLY_CREDIT_REFRESH = 10  # +10/week for anonymous and free signed-in
-PRO_MONTHLY_CREDITS = 250   # +250/month for Pro
-PLUS_MONTHLY_CREDITS = 1000 # +1000/month for Plus
-
-# Refresh timing
-WEEKLY_REFRESH_DAYS = 7
-
-# Legacy constants (kept for backwards compatibility during migration)
-FREE_SIGNED_OUT_QUOTA = ANONYMOUS_INITIAL_CREDITS
-FREE_TIER_QUOTA = FREE_SIGNED_IN_INITIAL_CREDITS
+# 
+# NOTE: Constants defined at top of file (ANONYMOUS_CREDIT_CAP, etc.)
 
 
 def get_credit_cap_for_user(tier: Optional[str], is_paid: bool, is_anonymous: bool) -> int:
