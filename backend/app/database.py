@@ -1225,7 +1225,8 @@ async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = No
         credit_balance = await _initialize_credit_balance(user, is_paid, tier, is_anonymous)
     elif not is_paid:
         # Apply weekly refresh for non-paid users (anonymous + free signed-in)
-        credit_balance = await apply_weekly_credit_refresh(user, is_anonymous)
+        async with get_db_pool().acquire() as conn:
+            credit_balance = await apply_weekly_credit_refresh(conn, user)
     
     # Get credit cap for this user type
     credit_cap = get_credit_cap_for_user(tier, is_paid, is_anonymous)
