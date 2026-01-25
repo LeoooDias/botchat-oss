@@ -630,6 +630,8 @@ async def get_user_by_oauth(provider: str, oauth_id: str) -> Optional[dict]:
                    message_quota_used, quota_period_start,
                    total_messages, recovery_email_hash, recovery_email_set_at,
                    account_status, brand,
+                   credit_balance, credit_cap, credits_last_refresh,
+                   credits_earned_total, credits_spent_total,
                    created_at, updated_at
             FROM users
             WHERE oauth_provider = $1 AND oauth_id = $2
@@ -652,6 +654,9 @@ async def get_user_by_stripe_customer(customer_id: str) -> Optional[dict]:
                    subscription_tier,
                    message_quota_used, quota_period_start,
                    total_messages, recovery_email_hash, recovery_email_set_at,
+                   account_status, brand,
+                   credit_balance, credit_cap, credits_last_refresh,
+                   credits_earned_total, credits_spent_total,
                    created_at, updated_at
             FROM users
             WHERE stripe_customer_id = $1
