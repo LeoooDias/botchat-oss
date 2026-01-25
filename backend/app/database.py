@@ -1322,7 +1322,8 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
         current_balance = await _initialize_credit_balance(user, is_paid, tier, is_anonymous)
     elif not is_paid:
         # Apply weekly refresh for non-paid users before spending
-        current_balance = await apply_weekly_credit_refresh(user, is_anonymous)
+        async with _pool.acquire() as conn:
+            current_balance = await apply_weekly_credit_refresh(conn, user)
     
     # Check if user has enough credits
     if current_balance < amount:
