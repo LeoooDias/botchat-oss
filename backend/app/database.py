@@ -43,17 +43,17 @@ class AccountDeletedException(Exception):
 
 
 # =============================================================================
-# Credit System Constants (v3.2.2)
+# Credit System Constants (v3.2.2) - GROWTH MODE
 # =============================================================================
-# Credit caps per user type
-ANONYMOUS_CREDIT_CAP = 10
-FREE_SIGNED_IN_CREDIT_CAP = 25
+# Credit caps per user type - generous limits to drive adoption
+ANONYMOUS_CREDIT_CAP = 25
+FREE_SIGNED_IN_CREDIT_CAP = 50
 PAID_CREDIT_CAP = 2000
 
-# Credit grants
-ANONYMOUS_INITIAL_CREDITS = 10
-FREE_SIGNED_IN_INITIAL_CREDITS = 25
-WEEKLY_CREDIT_REFRESH = 10  # +10/week for anonymous and free signed-in
+# Credit grants - let users experience full value
+ANONYMOUS_INITIAL_CREDITS = 25
+FREE_SIGNED_IN_INITIAL_CREDITS = 50
+WEEKLY_CREDIT_REFRESH = 25  # +25/week for anonymous and free signed-in
 PRO_MONTHLY_CREDITS = 250   # +250/month for Pro
 PLUS_MONTHLY_CREDITS = 1000 # +1000/month for Plus
 
