@@ -55,9 +55,10 @@ VERTEX_REGION = os.environ.get("GOOGLE_CLOUD_REGION", "us-central1")
 # Service account credentials (JSON string from Secret Manager)
 VERTEX_SERVICE_ACCOUNT_JSON = os.environ.get("VERTEX_AI_SERVICE_ACCOUNT", "")
 
-# Request timeout (seconds) - generous default for streaming responses
+# Request timeout (seconds) - must be generous for Study mode with large PDFs
+# Study mode: 32K output tokens + large PDFs can take 3-5 minutes
 # Can be overridden via environment variable for different deployment contexts
-DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("GEMINI_REQUEST_TIMEOUT", "120"))
+DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("GEMINI_REQUEST_TIMEOUT", "600"))
 
 # Supported models (as of Dec 2025)
 SUPPORTED_MODELS = {
