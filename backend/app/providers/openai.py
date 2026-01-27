@@ -138,7 +138,7 @@ def _convert_heic_to_jpeg(image_bytes: bytes) -> tuple[bytes, str]:
         img_rgb.save(output, format="JPEG", quality=92)
         
         converted_bytes = output.getvalue()
-        logger.info("Converted HEIC to JPEG: %d -> %d bytes", len(image_bytes), len(converted_bytes))
+        logger.warning("HEIC->JPEG conversion successful: %d -> %d bytes", len(image_bytes), len(converted_bytes))
         return converted_bytes, "image/jpeg"
         
     except ImportError:
@@ -665,13 +665,14 @@ class OpenAIProvider:
                     # HEIC conversion: OpenAI doesn't support HEIC (common iPhone format)
                     if mime_type == "image/heic":
                         file_bytes, mime_type = _convert_heic_to_jpeg(file_bytes)
-                        logger.info("Converted HEIC image for OpenAI compatibility")
+                        logger.warning("Converted HEIC image for OpenAI compatibility, new mime_type=%s", mime_type)
                     
                     # Strip EXIF metadata for privacy (GPS, device IDs, timestamps, etc.)
                     clean_bytes = _strip_exif_metadata(file_bytes, mime_type)
                     
                     # Base64 encode image
                     b64_data = base64.standard_b64encode(clean_bytes).decode("utf-8")
+                    logger.warning("OpenAI vision: sending image with mime_type=%s, size=%d bytes", mime_type, len(clean_bytes))
                     content_parts.append({
                         "type": "image_url",
                         "image_url": {
