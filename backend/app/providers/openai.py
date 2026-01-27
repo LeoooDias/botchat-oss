@@ -37,7 +37,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Generator, List, Optional
 
-from openai import OpenAI, Stream  # type: ignore[import-untyped]
+from openai import OpenAI, Stream, APITimeoutError  # type: ignore[import-untyped]
 from openai.types.chat import ChatCompletionChunk  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
@@ -49,9 +49,9 @@ logger = logging.getLogger(__name__)
 # Platform API key (from environment/secrets)
 PLATFORM_OPENAI_KEY = os.environ.get("PLATFORM_OPENAI_API_KEY", "")
 
-# Request timeout (seconds) - generous default for streaming responses
+# Request timeout (seconds) - extended timeout for GCP→OpenAI latency issues
 # Can be overridden via environment variable for different deployment contexts
-DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("OPENAI_REQUEST_TIMEOUT", "120"))
+DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("OPENAI_REQUEST_TIMEOUT", "360"))
 
 # Supported models (as of Dec 2025)
 SUPPORTED_MODELS = {
@@ -383,6 +383,11 @@ class OpenAIProvider:
                         'output_tokens': getattr(chunk.usage, 'completion_tokens', 0) or 0,
                     }
                     
+        except APITimeoutError as e:
+            # Specific handling for timeout errors - common with GCP→OpenAI latency
+            logger.error("OpenAI request timed out after %s seconds", DEFAULT_REQUEST_TIMEOUT)
+            raise TimeoutError(f"OpenAI request timed out after {int(DEFAULT_REQUEST_TIMEOUT)}s. The API is experiencing high latency. Please try again.") from None
+            
         except Exception as e:
             # Tightened logging: avoid leaking prompts via exception strings
             # Extract only safe attributes - NEVER use %r which may expose request content
@@ -397,7 +402,9 @@ class OpenAIProvider:
             
             # Provide user-friendly error messages (sanitized - no raw error in user output)
             # Use 'from None' to suppress exception context and prevent traceback leakage
-            if "429" in error_msg or "rate" in error_lower:
+            if "timeout" in error_lower or "timed out" in error_lower:
+                raise TimeoutError(f"OpenAI request timed out after {int(DEFAULT_REQUEST_TIMEOUT)}s. The API is experiencing high latency. Please try again.") from None
+            elif "429" in error_msg or "rate" in error_lower:
                 raise RateLimitError("Rate limited by OpenAI API. Please try again later.") from None
             elif "401" in error_msg or "invalid_api_key" in error_lower:
                 raise AuthenticationError("Invalid API key. Please check your OpenAI API key.") from None
@@ -728,6 +735,11 @@ class ContextLengthError(OpenAIAPIError):
 
 class OpenAIConfigError(OpenAIAPIError):
     """Configuration error (e.g., missing API key)."""
+    pass
+
+
+class TimeoutError(OpenAIAPIError):
+    """Request timed out waiting for OpenAI API response."""
     pass
 
 
