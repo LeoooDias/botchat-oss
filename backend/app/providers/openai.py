@@ -108,6 +108,47 @@ NO_SYSTEM_INSTRUCTION_MODELS = {
 }
 
 
+def _convert_heic_to_jpeg(image_bytes: bytes) -> tuple[bytes, str]:
+    """
+    Convert HEIC image to JPEG for OpenAI compatibility.
+    
+    OpenAI doesn't support HEIC (common iPhone format). We convert to JPEG.
+    
+    Args:
+        image_bytes: Raw HEIC image bytes
+        
+    Returns:
+        Tuple of (converted JPEG bytes, new mime type) or (original bytes, original mime) if conversion fails
+    """
+    try:
+        # Try pillow-heif first (best quality)
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            pass  # Will try basic Pillow
+        
+        from PIL import Image
+        
+        img = Image.open(io.BytesIO(image_bytes))
+        output = io.BytesIO()
+        
+        # Convert to RGB (HEIC might be RGBA) and save as JPEG
+        img_rgb = img.convert("RGB") if img.mode != "RGB" else img
+        img_rgb.save(output, format="JPEG", quality=92)
+        
+        converted_bytes = output.getvalue()
+        logger.info("Converted HEIC to JPEG: %d -> %d bytes", len(image_bytes), len(converted_bytes))
+        return converted_bytes, "image/jpeg"
+        
+    except ImportError:
+        logger.error("Cannot convert HEIC: Pillow not installed")
+        return image_bytes, "image/heic"
+    except Exception as e:
+        logger.error("Failed to convert HEIC to JPEG: %s - %s", type(e).__name__, str(e))
+        return image_bytes, "image/heic"
+
+
 def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
     """
     Strip EXIF metadata from images for privacy.
@@ -621,6 +662,11 @@ class OpenAIProvider:
                 filename = fd.get("name", "file")
                 
                 if file_bytes and mime_type.startswith("image/"):
+                    # HEIC conversion: OpenAI doesn't support HEIC (common iPhone format)
+                    if mime_type == "image/heic":
+                        file_bytes, mime_type = _convert_heic_to_jpeg(file_bytes)
+                        logger.info("Converted HEIC image for OpenAI compatibility")
+                    
                     # Strip EXIF metadata for privacy (GPS, device IDs, timestamps, etc.)
                     clean_bytes = _strip_exif_metadata(file_bytes, mime_type)
                     
