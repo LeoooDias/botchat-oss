@@ -396,7 +396,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 			</button>
 			<!-- Copied tooltip -->
 			{#if copiedMessageId === msg.id}
-				<div class="absolute -bottom-8 right-0 px-2 py-1 bg-gray-900 dark:bg-gray-600 text-white text-xs rounded shadow-lg whitespace-nowrap">
+				<div class="absolute -bottom-8 right-0 px-2 py-1 bg-gray-900 dark:bg-gray-600 text-white text-xs rounded shadow-lg whitespace-nowrap z-50">
 					Copied!
 				</div>
 			{/if}
@@ -421,7 +421,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 			</button>
 			<!-- Copied tooltip -->
 			{#if copiedMessageId === msg.id}
-				<div class="absolute -bottom-8 right-0 px-2 py-1 bg-gray-900 dark:bg-gray-600 text-white text-xs rounded shadow-lg whitespace-nowrap">
+				<div class="absolute -bottom-8 right-0 px-2 py-1 bg-gray-900 dark:bg-gray-600 text-white text-xs rounded shadow-lg whitespace-nowrap z-50">
 					Copied!
 				</div>
 			{/if}
