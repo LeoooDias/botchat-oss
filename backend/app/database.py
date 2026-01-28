@@ -725,6 +725,83 @@ async def get_user_by_oauth(provider: str, oauth_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+async def find_user_with_hash_fallback(
+    provider: str,
+    oauth_id: str,
+    brand: str = "botchat"
+) -> Optional[dict]:
+    """Find user trying both current and legacy hash versions.
+
+    Used during salt rotation period. If user found with old hash,
+    automatically migrates to new hash.
+
+    This enables seamless salt rotation without orphaning users:
+    1. First tries V1 hash (current/primary)
+    2. If V2 salt is configured, tries V2 hash as fallback
+    3. If found with V2, migrates user to V1 hash
+
+    Args:
+        provider: OAuth provider
+        oauth_id: Raw OAuth ID (unhashed)
+        brand: Brand identifier
+
+    Returns:
+        User record if found, None otherwise
+    """
+    # Import here to avoid circular dependency
+    from app.auth import hash_oauth_id_versioned, OAUTH_HASH_SALT_V2
+
+    # Try primary hash first (version 1)
+    hash_v1 = hash_oauth_id_versioned(provider, oauth_id, brand, version=1)
+    user = await get_user_by_oauth(provider, hash_v1)
+
+    if user:
+        return user
+
+    # If V2 salt configured, try fallback lookup (during rotation period)
+    if OAUTH_HASH_SALT_V2:
+        try:
+            hash_v2 = hash_oauth_id_versioned(provider, oauth_id, brand, version=2)
+            user = await get_user_by_oauth(provider, hash_v2)
+
+            if user:
+                # Found with old hash - migrate to new hash
+                logger.info("Migrating user %s to new hash version", user['id'])
+                await migrate_user_hash(user['id'], provider, hash_v1)
+                return user
+        except ValueError:
+            # V2 salt not configured, skip fallback
+            pass
+
+    return None
+
+
+async def migrate_user_hash(user_id: int, provider: str, new_hash: str) -> None:
+    """Update user's OAuth hash to new version.
+
+    Called during salt rotation when user logs in with old hash.
+
+    Args:
+        user_id: User's database ID
+        provider: OAuth provider
+        new_hash: New hash to update to
+    """
+    if not _pool:
+        logger.error("Cannot migrate user hash - no database pool")
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE users
+            SET oauth_id = $1, updated_at = NOW()
+            WHERE id = $2 AND oauth_provider = $3
+            """,
+            new_hash, user_id, provider
+        )
+        logger.info("User %s hash migrated successfully", user_id)
+
+
 async def get_user_by_stripe_customer(customer_id: str) -> Optional[dict]:
     """Get user by Stripe customer ID."""
     if not _pool:

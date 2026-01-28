@@ -141,6 +141,21 @@ OAUTH_HASH_SALT = _get_pepper("oauth-hash-salt", "OAUTH_HASH_SALT")
 # Loaded from GCP Secret Manager (email-hash-salt) or EMAIL_HASH_SALT env var
 EMAIL_HASH_SALT = _get_pepper("email-hash-salt", "EMAIL_HASH_SALT")
 
+# -----------------------------
+# Secret Rotation Support (V2 Salts)
+# -----------------------------
+# These V2 salts enable future salt rotation without orphaning users.
+# Leave empty until rotation is needed.
+#
+# ROTATION PROCEDURE:
+# 1. Generate new salt, add to Secret Manager as oauth-hash-salt-v2
+# 2. Deploy code with fallback lookup (find_user_with_hash_fallback)
+# 3. Wait 90 days for users to migrate on login
+# 4. Swap V1 <-> V2 in Secret Manager (make new salt primary)
+# 5. After another 90 days, remove old salt
+OAUTH_HASH_SALT_V2 = _get_pepper("oauth-hash-salt-v2", "OAUTH_HASH_SALT_V2")
+EMAIL_HASH_SALT_V2 = _get_pepper("email-hash-salt-v2", "EMAIL_HASH_SALT_V2")
+
 # Email allowlist - comma-separated list of allowed OAuth IDs (empty = allow all)
 # Used to restrict access in dev environments
 # NOTE: These should be hashed OAuth IDs, not emails
@@ -184,6 +199,51 @@ def hash_oauth_id(provider: str, oauth_id: str, brand: str = "botchat") -> str:
     else:
         # New format for multi-brand: SHA-256(salt:brand:provider:oauth_id)
         data = f"{OAUTH_HASH_SALT}:{brand}:{provider}:{oauth_id}".encode('utf-8')
+    return hashlib.sha256(data).hexdigest()
+
+
+def hash_oauth_id_versioned(
+    provider: str,
+    oauth_id: str,
+    brand: str = "botchat",
+    version: int = 1
+) -> str:
+    """Hash OAuth ID with specified salt version.
+
+    Used for salt rotation: compute hashes with both old and new salts
+    during migration period.
+
+    Args:
+        provider: OAuth provider name
+        oauth_id: Raw OAuth ID from provider
+        brand: Brand identifier
+        version: Salt version (1=primary/current, 2=secondary/new during rotation)
+
+    Returns:
+        SHA-256 hash of the OAuth identity
+
+    Raises:
+        ValueError: If version 2 requested but V2 salt not configured
+    """
+    if version == 1:
+        salt = OAUTH_HASH_SALT
+    elif version == 2:
+        salt = OAUTH_HASH_SALT_V2
+        if not salt:
+            raise ValueError("OAUTH_HASH_SALT_V2 not configured for version 2 hashing")
+    else:
+        raise ValueError(f"Unknown hash version: {version}")
+
+    if not salt:
+        logger.warning("Using unsalted hash (version=%d)", version)
+        return f"{provider}:{oauth_id}"
+
+    # Use appropriate format based on brand
+    if brand == "botchat":
+        data = f"{salt}:{provider}:{oauth_id}".encode('utf-8')
+    else:
+        data = f"{salt}:{brand}:{provider}:{oauth_id}".encode('utf-8')
+
     return hashlib.sha256(data).hexdigest()
 
 
@@ -460,7 +520,8 @@ async def exchange_github_code(code: str, redirect_uri: str) -> UserInfo:
         if not access_token:
             error = token_data.get("error_description", "Unknown error")
             logger.error("GitHub token missing: %s", error)
-            raise HTTPException(status_code=401, detail=f"GitHub auth error: {error}")
+            # Don't leak OAuth error details to client
+            raise HTTPException(status_code=401, detail="GitHub authentication failed")
         
         # Step 2: Fetch user ID only (we don't need profile data)
         user_resp = await client.get(
