@@ -143,6 +143,65 @@ _transparency_pool: Optional[Pool] = None
 
 
 # -----------------------------
+# Database Resilience Utilities
+# -----------------------------
+
+async def check_db_health() -> bool:
+    """Check if database connection is healthy.
+    
+    Returns True if we can execute a simple query, False otherwise.
+    Used by health check endpoint to verify DB connectivity.
+    """
+    if not _pool:
+        return False
+    try:
+        async with _pool.acquire(timeout=5) as conn:
+            await conn.fetchval("SELECT 1")
+        return True
+    except Exception as e:
+        logger.warning("Database health check failed: %s", str(e))
+        return False
+
+
+async def with_db_retry(operation, max_retries: int = 3, base_delay: float = 0.5):
+    """Execute a database operation with exponential backoff retry.
+    
+    Args:
+        operation: Async callable that performs the database operation
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds (will be doubled each retry)
+    
+    Returns:
+        Result of the operation
+    
+    Raises:
+        Last exception if all retries fail
+    """
+    import asyncio
+    last_error = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await operation()
+        except (asyncpg.PostgresConnectionError, 
+                asyncpg.InterfaceError,
+                ConnectionRefusedError,
+                OSError) as e:
+            last_error = e
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "Database operation failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries + 1, delay, str(e)
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error("Database operation failed after %d attempts: %s", max_retries + 1, str(e))
+    
+    raise last_error
+
+
+# -----------------------------
 # Connection Management
 # -----------------------------
 
@@ -157,11 +216,13 @@ async def init_db():
     try:
         _pool = await asyncpg.create_pool(
             DATABASE_URL,
-            min_size=2,
-            max_size=10,
+            min_size=5,           # Increased from 2 for better availability
+            max_size=20,          # Increased from 10 to handle concurrent requests
             command_timeout=60,
+            # Connection health settings for Cloud SQL
+            max_inactive_connection_lifetime=300,  # Close idle connections after 5 min
         )
-        logger.info("Database connection pool created")
+        logger.info("Database connection pool created (min=5, max=20)")
         
         # Create transparency pool if URL provided (optional gold-standard setup)
         if TRANSPARENCY_DATABASE_URL:
