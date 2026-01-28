@@ -26,10 +26,25 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	// @ts-ignore - module resolved via parent project symlink
 	import { formatProviderName } from '$lib/utils/format';
 
-	const dispatch = createEventDispatcher<{ 
+	const dispatch = createEventDispatcher<{
 		reply: { messageId: string; botId: string };
 		export: { message: Message };
 	}>();
+
+	// Track which message is showing "Copied!" tooltip
+	let copiedMessageId: string | null = null;
+
+	async function copyMessageToClipboard(msg: Message) {
+		try {
+			await navigator.clipboard.writeText(msg.content);
+			copiedMessageId = msg.id;
+			setTimeout(() => {
+				copiedMessageId = null;
+			}, 1500);
+		} catch (err) {
+			console.error('Failed to copy message:', err);
+		}
+	}
 
 	interface Message {
 		id: string;
@@ -341,31 +356,76 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					</div>
 				{/if}
 
-		<!-- Export button for bot messages (not error messages) -->
+		<!-- Action buttons for bot messages (not error messages) -->
 		{#if msg.role === 'assistant' && !msg.isError && msg.botId}
+			<!-- Export button -->
 			<button
 				on:click={() => dispatch('export', { message: msg })}
-				class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+				class="absolute -bottom-2 right-[4.5rem] w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
 				title="Export this message"
 			>
 				<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
 				</svg>
 			</button>
-		{/if}
-				
-				<!-- Reply button for bot messages (not error messages) -->
-			{#if msg.role === 'assistant' && !msg.isError && msg.botId}
-				<button
-					on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
-					class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
-					title="Reply to this bot only"
-				>
-					<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+			<!-- Reply button -->
+			<button
+				on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
+				class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+				title="Reply to this bot only"
+			>
+				<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+				</svg>
+			</button>
+			<!-- Copy button -->
+			<button
+				on:click={() => copyMessageToClipboard(msg)}
+				class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+				title="Copy to clipboard"
+			>
+				{#if copiedMessageId === msg.id}
+					<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
 					</svg>
-				</button>
+				{:else}
+					<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+					</svg>
+				{/if}
+			</button>
+			<!-- Copied tooltip -->
+			{#if copiedMessageId === msg.id}
+				<div class="absolute -bottom-8 right-0 px-2 py-1 bg-gray-900 dark:bg-gray-600 text-white text-xs rounded shadow-lg whitespace-nowrap">
+					Copied!
+				</div>
 			{/if}
+		{/if}
+
+		<!-- Copy button for user messages -->
+		{#if msg.role === 'user'}
+			<button
+				on:click={() => copyMessageToClipboard(msg)}
+				class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+				title="Copy to clipboard"
+			>
+				{#if copiedMessageId === msg.id}
+					<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+					</svg>
+				{:else}
+					<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+					</svg>
+				{/if}
+			</button>
+			<!-- Copied tooltip -->
+			{#if copiedMessageId === msg.id}
+				<div class="absolute -bottom-8 right-0 px-2 py-1 bg-gray-900 dark:bg-gray-600 text-white text-xs rounded shadow-lg whitespace-nowrap">
+					Copied!
+				</div>
+			{/if}
+		{/if}
 			</div>
 		</div>
 	{/each}
