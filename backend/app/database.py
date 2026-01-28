@@ -216,13 +216,13 @@ async def init_db():
     try:
         _pool = await asyncpg.create_pool(
             DATABASE_URL,
-            min_size=5,           # Increased from 2 for better availability
-            max_size=20,          # Increased from 10 to handle concurrent requests
+            min_size=2,           # Keep low - Cloud SQL has limited connections
+            max_size=10,          # Reasonable max per instance
             command_timeout=60,
             # Connection health settings for Cloud SQL
             max_inactive_connection_lifetime=300,  # Close idle connections after 5 min
         )
-        logger.info("Database connection pool created (min=5, max=20)")
+        logger.info("Database connection pool created (min=2, max=10)")
         
         # Create transparency pool if URL provided (optional gold-standard setup)
         if TRANSPARENCY_DATABASE_URL:
