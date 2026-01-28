@@ -48,53 +48,9 @@ PLATFORM_ANTHROPIC_KEY = os.environ.get("PLATFORM_ANTHROPIC_API_KEY", "")
 # Can be overridden via environment variable for different deployment contexts
 DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("ANTHROPIC_REQUEST_TIMEOUT", "120"))
 
-# Supported models (as of Dec 2025)
-SUPPORTED_MODELS = {
-    # Claude 4 family (2025)
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-    # Claude 3.5 family
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-sonnet-latest",
-    "claude-3-5-haiku-20241022",
-    "claude-3-5-haiku-latest",
-    # Claude 3 family
-    "claude-3-opus-20240229",
-    "claude-3-opus-latest",
-    "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
-    # Convenience aliases
-    "claude-sonnet-4",
-    "claude-opus-4",
-}
-
-# Models that support vision (image inputs)
-# All Claude 3+ models support vision - this list confirms known models
-# Models not listed will still attempt vision (Claude generally supports it)
-VISION_MODELS = {
-    # Claude 4.5 family (2026)
-    "claude-opus-4-5",
-    "claude-sonnet-4-5",
-    "claude-opus-4.5",
-    "claude-sonnet-4.5",
-    # Claude 4 family (2025)
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-    "claude-sonnet-4",
-    "claude-opus-4",
-    # Claude 3.5 family
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-sonnet-latest",
-    "claude-3-5-haiku-20241022",
-    "claude-3-5-haiku-latest",
-    # Claude 3 family
-    "claude-3-opus-20240229",
-    "claude-3-opus-latest",
-    "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
-}
-
-# Models known to NOT support vision (currently none for Claude 3+)
+# Vision support: All Claude 3+ models support vision
+# We use a blocklist approach - only block models known to NOT support vision
+# Currently empty since all modern Claude models support images
 NO_VISION_MODELS: set[str] = set()
 
 # Max tokens limits by model (approximate)
@@ -294,10 +250,6 @@ class AnthropicProvider:
         Returns:
             Dict with 'citations' list when web search is enabled
         """
-        # Validate model
-        if model not in SUPPORTED_MODELS:
-            logger.warning("Model '%s' not in supported list, attempting anyway", model)
-        
         # Track citations for web search
         citations: List[Dict[str, Any]] = []
         

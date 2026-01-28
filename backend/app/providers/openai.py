@@ -53,44 +53,7 @@ PLATFORM_OPENAI_KEY = os.environ.get("PLATFORM_OPENAI_API_KEY", "")
 # Can be overridden via environment variable for different deployment contexts
 DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("OPENAI_REQUEST_TIMEOUT", "360"))
 
-# Supported models (as of Dec 2025)
-SUPPORTED_MODELS = {
-    # GPT-4 family
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-4",
-    # GPT-4.1 family (2025)
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4.1-nano",
-    # o1/o3 reasoning models
-    "o1",
-    "o1-mini",
-    "o1-preview",
-    "o3-mini",
-    # Legacy
-    "gpt-3.5-turbo",
-}
-
-# Models that support vision (image inputs)
-# Most modern GPT models support vision - this list is for explicit confirmation
-# Models not listed here will still attempt vision if image is provided
-VISION_MODELS = {
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "o1",
-    # GPT-5 family (2025-2026)
-    "gpt-5",
-    "gpt-5.1",
-    "gpt-5.2",
-    "gpt-5-mini",
-}
-
-# Models known to NOT support vision
+# Models known to NOT support vision (blocklist approach)
 NO_VISION_MODELS = {
     "gpt-3.5-turbo",
     "gpt-4",  # base gpt-4 without vision
@@ -345,10 +308,6 @@ class OpenAIProvider:
         Returns:
             Dict with 'citations' list when web search is enabled
         """
-        # Validate model
-        if model not in SUPPORTED_MODELS:
-            logger.warning("Model '%s' not in supported list, attempting anyway", model)
-        
         # Privacy Control: Apply PII scrubbing if configured
         processed_message = message
         processed_system = system_instruction

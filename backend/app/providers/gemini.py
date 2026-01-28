@@ -60,20 +60,6 @@ VERTEX_SERVICE_ACCOUNT_JSON = os.environ.get("VERTEX_AI_SERVICE_ACCOUNT", "")
 # Can be overridden via environment variable for different deployment contexts
 DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("GEMINI_REQUEST_TIMEOUT", "600"))
 
-# Supported models (as of Dec 2025)
-SUPPORTED_MODELS = {
-    "gemini-3-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-    # Legacy models (for backward compatibility)
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
-}
-
-
 def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
     """
     Strip EXIF metadata from images for privacy.
@@ -258,10 +244,6 @@ class GeminiProvider:
         Returns:
             Dict with 'citations' list containing web search sources (via generator return)
         """
-        # Validate model
-        if model not in SUPPORTED_MODELS:
-            logger.warning("Model '%s' not in supported list, attempting anyway", model)
-        
         # Privacy Control: Warn about experimental/preview models
         # Google's terms may treat preview/experimental data differently than GA models
         is_experimental = "preview" in model or "exp" in model
