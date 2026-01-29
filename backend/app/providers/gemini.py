@@ -345,14 +345,33 @@ class GeminiProvider:
         citations: List[Dict[str, Any]] = []
         usage_info: Dict[str, int] = {}
         try:
+            # TIMING: SDK call timing
+            import time as _time
+            _t_sdk_start = _time.perf_counter()
+
             response_stream = self.client.models.generate_content_stream(  # type: ignore[misc]
                 model=model,
                 contents=contents,
                 config=config,
             )
-            
+
+            # TIMING: After stream object created
+            _t_stream_created = _time.perf_counter()
+            logger.warning(
+                "⏱️ TIMING sdk_create: create_call=%.3fs model=%s",
+                _t_stream_created - _t_sdk_start, model
+            )
+
+            _t_first_chunk = None
             final_response = None
             for chunk in response_stream:
+                # TIMING: First chunk from stream
+                if _t_first_chunk is None:
+                    _t_first_chunk = _time.perf_counter()
+                    logger.warning(
+                        "⏱️ TIMING sdk_first_chunk: wait=%.3fs model=%s",
+                        _t_first_chunk - _t_stream_created, model
+                    )
                 final_response = chunk  # Keep track of final chunk for grounding metadata + usage
                 if chunk.text:
                     yield chunk.text
