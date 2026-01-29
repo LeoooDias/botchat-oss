@@ -435,27 +435,8 @@ class AnthropicProvider:
                 # Standard streaming without web search
                 usage_info = {}
 
-                # TIMING: SDK call timing
-                import time as _time
-                _t_sdk_start = _time.perf_counter()
-
                 with self.client.messages.stream(**request_params) as stream:
-                    # TIMING: After stream context entered
-                    _t_stream_created = _time.perf_counter()
-                    logger.warning(
-                        "⏱️ TIMING sdk_create: create_call=%.3fs model=%s",
-                        _t_stream_created - _t_sdk_start, model
-                    )
-
-                    _t_first_chunk = None
                     for text in stream.text_stream:
-                        # TIMING: First chunk from stream
-                        if _t_first_chunk is None:
-                            _t_first_chunk = _time.perf_counter()
-                            logger.warning(
-                                "⏱️ TIMING sdk_first_chunk: wait=%.3fs model=%s",
-                                _t_first_chunk - _t_stream_created, model
-                            )
                         yield text
                     # Get usage from final message
                     final_message = stream.get_final_message()
