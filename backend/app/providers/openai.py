@@ -407,9 +407,29 @@ class OpenAIProvider:
         # Stream response
         usage_info: Dict[str, int] = {}
         try:
+            # TIMING: SDK call timing
+            import time as _time
+            _t_sdk_start = _time.perf_counter()
+
             response_stream: Stream[ChatCompletionChunk] = self.client.chat.completions.create(**request_params)  # type: ignore[assignment]
-            
+
+            # TIMING: After SDK call returns (stream object created, but not iterated)
+            _t_sdk_stream_created = _time.perf_counter()
+            logger.warning(
+                "⏱️ TIMING sdk_create: create_call=%.3fs model=%s",
+                _t_sdk_stream_created - _t_sdk_start, model
+            )
+
+            _t_first_chunk = None
             for chunk in response_stream:  # pyright: ignore[reportUnknownVariableType]
+                # TIMING: First chunk from stream
+                if _t_first_chunk is None:
+                    _t_first_chunk = _time.perf_counter()
+                    logger.warning(
+                        "⏱️ TIMING sdk_first_chunk: wait=%.3fs model=%s",
+                        _t_first_chunk - _t_sdk_stream_created, model
+                    )
+
                 if chunk.choices and chunk.choices[0].delta.content:  # pyright: ignore[reportUnknownMemberType]
                     yield chunk.choices[0].delta.content  # pyright: ignore[reportUnknownMemberType]
                 # Capture usage from final chunk (when stream_options.include_usage=True)
