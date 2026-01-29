@@ -53,6 +53,57 @@ PLATFORM_OPENAI_KEY = os.environ.get("PLATFORM_OPENAI_API_KEY", "")
 # Can be overridden via environment variable for different deployment contexts
 DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("OPENAI_REQUEST_TIMEOUT", "360"))
 
+# -----------------------------
+# Client Singleton (Connection Pooling)
+# -----------------------------
+# Reusing the OpenAI client across requests enables HTTP connection pooling,
+# which significantly reduces Time-To-First-Token (TTFT) by avoiding:
+# - Fresh TLS handshakes per request (~200-500ms)
+# - TCP slow start on each new connection
+# - No HTTP keep-alive benefits
+#
+# The httpx client used internally by the OpenAI SDK maintains a connection pool.
+
+_OPENAI_CLIENT: Optional[OpenAI] = None
+
+
+def _get_openai_client() -> OpenAI:
+    """
+    Get or create the singleton OpenAI client.
+
+    This ensures connection pooling across requests, dramatically improving
+    Time-To-First-Token (TTFT) by reusing HTTP connections.
+
+    Returns:
+        Shared OpenAI client instance
+
+    Raises:
+        OpenAIConfigError: If no API key is configured
+    """
+    global _OPENAI_CLIENT
+
+    if _OPENAI_CLIENT is None:
+        if not PLATFORM_OPENAI_KEY:
+            raise OpenAIConfigError("No OpenAI platform API key available")
+
+        _OPENAI_CLIENT = OpenAI(
+            api_key=PLATFORM_OPENAI_KEY,
+            timeout=DEFAULT_REQUEST_TIMEOUT,
+            default_headers={
+                "X-OpenAI-No-Store": "true",  # Request ZDR (best-effort, not guaranteed)
+                # Minimize SDK telemetry headers (privacy-forward)
+                "X-Stainless-OS": "private",
+                "X-Stainless-Arch": "private",
+                "X-Stainless-Runtime": "private",
+                "X-Stainless-Runtime-Version": "private",
+                "X-Stainless-Package-Version": "private",
+                "X-Stainless-Lang": "private",
+            }
+        )
+        logger.info("🏢 OpenAI client initialized (connection pooling enabled)")
+
+    return _OPENAI_CLIENT
+
 # Models known to NOT support vision (blocklist approach)
 NO_VISION_MODELS = {
     "gpt-3.5-turbo",
@@ -243,34 +294,19 @@ class OpenAIProvider:
     def __init__(self, strip_metadata: bool = True):
         """
         Initialize OpenAI provider.
-        
+
         Args:
             strip_metadata: If True, don't log filenames/sensitive metadata (default: True).
+
+        Note:
+            Uses a singleton client for connection pooling. This dramatically
+            improves TTFT by reusing HTTP connections instead of creating
+            fresh TLS handshakes per request.
         """
-        self.api_key = PLATFORM_OPENAI_KEY
         self.strip_metadata = strip_metadata
-        
-        if not self.api_key:
-            raise OpenAIConfigError("No OpenAI platform API key available")
-        
-        # Create client with ZDR header and minimized SDK telemetry
-        # NOTE: X-OpenAI-No-Store is only honored for orgs with formal ZDR agreements
-        # NOTE: X-Stainless-* headers are SDK telemetry - we suppress them for privacy
-        self.client = OpenAI(
-            api_key=self.api_key,
-            timeout=DEFAULT_REQUEST_TIMEOUT,  # Explicit timeout for reliability
-            default_headers={
-                "X-OpenAI-No-Store": "true",  # Request ZDR (best-effort, not guaranteed)
-                # Minimize SDK telemetry headers (privacy-forward)
-                "X-Stainless-OS": "private",
-                "X-Stainless-Arch": "private",
-                "X-Stainless-Runtime": "private",
-                "X-Stainless-Runtime-Version": "private",
-                "X-Stainless-Package-Version": "private",
-                "X-Stainless-Lang": "private",
-            }
-        )
-        logger.info("🏢 Using botchat's OpenAI platform API key")
+
+        # Use singleton client for connection pooling (improves TTFT)
+        self.client = _get_openai_client()
     
     def stream(
         self,

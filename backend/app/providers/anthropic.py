@@ -56,6 +56,52 @@ NO_VISION_MODELS: set[str] = set()
 # Max tokens limits by model (approximate)
 DEFAULT_MAX_TOKENS = 4096
 
+# -----------------------------
+# Client Singleton (Connection Pooling)
+# -----------------------------
+# Reusing the Anthropic client across requests enables HTTP connection pooling,
+# which significantly reduces Time-To-First-Token (TTFT) by avoiding:
+# - Fresh TLS handshakes per request (~200-500ms)
+# - TCP slow start on each new connection
+# - No HTTP keep-alive benefits
+
+_ANTHROPIC_CLIENT: Optional[anthropic.Anthropic] = None
+
+
+def _get_anthropic_client(additional_headers: Optional[Dict[str, str]] = None) -> anthropic.Anthropic:
+    """
+    Get or create the singleton Anthropic client.
+
+    This ensures connection pooling across requests, dramatically improving
+    Time-To-First-Token (TTFT) by reusing HTTP connections.
+
+    Args:
+        additional_headers: Optional headers (only used on first initialization)
+
+    Returns:
+        Shared Anthropic client instance
+
+    Raises:
+        AnthropicConfigError: If no API key is configured
+    """
+    global _ANTHROPIC_CLIENT
+
+    if _ANTHROPIC_CLIENT is None:
+        if not PLATFORM_ANTHROPIC_KEY:
+            raise AnthropicConfigError("No Anthropic platform API key available")
+
+        client_kwargs: Dict[str, Any] = {
+            "api_key": PLATFORM_ANTHROPIC_KEY,
+            "timeout": DEFAULT_REQUEST_TIMEOUT,
+        }
+        if additional_headers:
+            client_kwargs["default_headers"] = additional_headers
+
+        _ANTHROPIC_CLIENT = anthropic.Anthropic(**client_kwargs)
+        logger.info("🏢 Anthropic client initialized (connection pooling enabled)")
+
+    return _ANTHROPIC_CLIENT
+
 
 def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
     """
@@ -184,33 +230,27 @@ class AnthropicProvider:
     """
     
     def __init__(
-        self, 
+        self,
         additional_headers: Optional[Dict[str, str]] = None,
         strip_metadata: bool = True,
     ):
         """
         Initialize Anthropic provider.
-        
+
         Args:
-            additional_headers: Optional dict of additional HTTP headers to send.
+            additional_headers: Optional dict of additional HTTP headers to send
+                              (only used on first client initialization).
             strip_metadata: If True, don't log filenames/sensitive metadata (default: True).
+
+        Note:
+            Uses a singleton client for connection pooling. This dramatically
+            improves TTFT by reusing HTTP connections instead of creating
+            fresh TLS handshakes per request.
         """
-        self.api_key = PLATFORM_ANTHROPIC_KEY
         self.strip_metadata = strip_metadata
-        
-        if not self.api_key:
-            raise AnthropicConfigError("No Anthropic platform API key available")
-        
-        # Create client with optional additional headers and explicit timeout
-        client_kwargs: Dict[str, Any] = {
-            "api_key": self.api_key,
-            "timeout": DEFAULT_REQUEST_TIMEOUT,  # Explicit timeout for reliability
-        }
-        if additional_headers:
-            client_kwargs["default_headers"] = additional_headers
-        
-        self.client = anthropic.Anthropic(**client_kwargs)
-        logger.info("🏢 Using botchat's Anthropic platform API key")
+
+        # Use singleton client for connection pooling (improves TTFT)
+        self.client = _get_anthropic_client(additional_headers)
     
     def stream(
         self,

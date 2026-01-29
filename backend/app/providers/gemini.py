@@ -60,6 +60,77 @@ VERTEX_SERVICE_ACCOUNT_JSON = os.environ.get("VERTEX_AI_SERVICE_ACCOUNT", "")
 # Can be overridden via environment variable for different deployment contexts
 DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("GEMINI_REQUEST_TIMEOUT", "600"))
 
+# -----------------------------
+# Client Singleton (Connection Pooling)
+# -----------------------------
+# Reusing the Gemini client across requests enables HTTP connection pooling,
+# which significantly reduces Time-To-First-Token (TTFT) by avoiding:
+# - Fresh TLS handshakes per request (~200-500ms)
+# - TCP slow start on each new connection
+# - No HTTP keep-alive benefits
+
+_GEMINI_CLIENT: Optional[genai.Client] = None
+
+
+def _get_gemini_client() -> genai.Client:
+    """
+    Get or create the singleton Gemini (Vertex AI) client.
+
+    This ensures connection pooling across requests, dramatically improving
+    Time-To-First-Token (TTFT) by reusing HTTP connections.
+
+    Returns:
+        Shared Gemini client instance
+
+    Raises:
+        RuntimeError: If Vertex AI configuration is invalid
+    """
+    global _GEMINI_CLIENT
+
+    if _GEMINI_CLIENT is None:
+        # HTTP options with explicit timeout for reliability
+        # Note: google-genai SDK uses milliseconds for timeout
+        http_options = types.HttpOptions(
+            timeout=int(DEFAULT_REQUEST_TIMEOUT * 1000),
+        )
+
+        logger.debug("Creating Vertex AI client for project=%s, region=%s",
+                    VERTEX_PROJECT, VERTEX_REGION)
+
+        if VERTEX_SERVICE_ACCOUNT_JSON:
+            # Parse service account JSON from environment
+            try:
+                sa_info = json.loads(VERTEX_SERVICE_ACCOUNT_JSON)
+                credentials = service_account.Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
+                    sa_info,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+                _GEMINI_CLIENT = genai.Client(
+                    vertexai=True,
+                    project=VERTEX_PROJECT,
+                    location=VERTEX_REGION,
+                    credentials=credentials,
+                    http_options=http_options,
+                )
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse VERTEX_AI_SERVICE_ACCOUNT JSON: %s", e)
+                raise RuntimeError("Invalid Vertex AI service account configuration")
+        else:
+            # Fall back to Application Default Credentials (ADC)
+            # Works in Cloud Run with attached service account
+            logger.debug("Using Application Default Credentials for Vertex AI")
+            _GEMINI_CLIENT = genai.Client(
+                vertexai=True,
+                project=VERTEX_PROJECT,
+                location=VERTEX_REGION,
+                http_options=http_options,
+            )
+
+        logger.info("🏢 Gemini client initialized (connection pooling enabled)")
+
+    return _GEMINI_CLIENT
+
+
 def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
     """
     Strip EXIF metadata from images for privacy.
@@ -144,14 +215,14 @@ class GeminiProvider:
     """
     
     def __init__(
-        self, 
+        self,
         allowed_regions: Optional[List[str]] = None,
         pii_scrubber: Optional[Callable[[str], str]] = None,
         strip_metadata: bool = True,
     ):
         """
         Initialize Gemini provider with Vertex AI.
-        
+
         Args:
             allowed_regions: Optional list of allowed GCP regions for data sovereignty.
                            If specified and the configured region is not in the list,
@@ -159,11 +230,16 @@ class GeminiProvider:
             pii_scrubber: Optional callback function to scrub PII from messages
                          before sending to the API. Signature: (str) -> str
             strip_metadata: If True, don't log filenames/sensitive metadata (default: True).
+
+        Note:
+            Uses a singleton client for connection pooling. This dramatically
+            improves TTFT by reusing HTTP connections instead of creating
+            fresh TLS handshakes per request.
         """
         self.pii_scrubber = pii_scrubber
         self.strip_metadata = strip_metadata
         self.backend = "vertex_ai"
-        
+
         # Privacy Control: Enforce region allow-list
         if allowed_regions:
             if VERTEX_REGION not in allowed_regions:
@@ -171,50 +247,9 @@ class GeminiProvider:
                     f"Privacy Violation: Region '{VERTEX_REGION}' is not in allowed list {allowed_regions}. "
                     f"This may violate data sovereignty requirements."
                 )
-        
-        self.client = self._create_client()
-        logger.info("🏢 Using Vertex AI (%s, %s)", VERTEX_PROJECT, VERTEX_REGION)
-        
-    def _create_client(self) -> genai.Client:
-        """Create the appropriate genai client based on auth method."""
-        # HTTP options with explicit timeout for reliability
-        # Note: google-genai SDK uses milliseconds for timeout
-        http_options = types.HttpOptions(
-            timeout=int(DEFAULT_REQUEST_TIMEOUT * 1000),
-        )
-        
-        # Always use Vertex AI with service account credentials
-        logger.debug("Creating Vertex AI client for project=%s, region=%s", 
-                    VERTEX_PROJECT, VERTEX_REGION)
-        
-        if VERTEX_SERVICE_ACCOUNT_JSON:
-            # Parse service account JSON from environment
-            try:
-                sa_info = json.loads(VERTEX_SERVICE_ACCOUNT_JSON)
-                credentials = service_account.Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
-                    sa_info,
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
-                )
-                return genai.Client(
-                    vertexai=True,
-                    project=VERTEX_PROJECT,
-                    location=VERTEX_REGION,
-                    credentials=credentials,
-                    http_options=http_options,
-                )
-            except json.JSONDecodeError as e:
-                logger.error("Failed to parse VERTEX_AI_SERVICE_ACCOUNT JSON: %s", e)
-                raise RuntimeError("Invalid Vertex AI service account configuration")
-        else:
-            # Fall back to Application Default Credentials (ADC)
-            # Works in Cloud Run with attached service account
-            logger.debug("Using Application Default Credentials for Vertex AI")
-            return genai.Client(
-                vertexai=True,
-                project=VERTEX_PROJECT,
-                location=VERTEX_REGION,
-                http_options=http_options,
-            )
+
+        # Use singleton client for connection pooling (improves TTFT)
+        self.client = _get_gemini_client()
     
     def stream(
         self,
