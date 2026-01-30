@@ -69,12 +69,7 @@ class AnonymizedUser(BaseModel):
     subscription_status: str  # Masked
     subscription_id: Optional[str]  # Masked
     subscription_ends_at: Optional[str]  # Masked
-    
-    # Usage
-    message_quota_used: str  # Masked
-    quota_period_start: Optional[str]  # Masked
-    total_messages: str  # Masked
-    
+
     # Recovery (optional feature)
     recovery_email_hash: Optional[str]  # Masked (proves field exists)
     recovery_email_set_at: Optional[str]  # Masked
@@ -150,7 +145,7 @@ async def get_transparency_data(
             # This is the gold standard: raw data never leaves the database
             fetch_result = await conn.fetch(  # type: ignore[union-attr]
                 """
-                SELECT 
+                SELECT
                     id,
                     oauth_provider,
                     oauth_id,
@@ -158,9 +153,6 @@ async def get_transparency_data(
                     subscription_status,
                     subscription_id,
                     subscription_ends_at,
-                    message_quota_used,
-                    quota_period_start,
-                    total_messages,
                     recovery_email_hash,
                     recovery_email_set_at,
                     created_at,
@@ -187,9 +179,6 @@ async def get_transparency_data(
                     subscription_status=row["subscription_status"],
                     subscription_id=row.get("subscription_id"),
                     subscription_ends_at=row.get("subscription_ends_at"),
-                    message_quota_used=row["message_quota_used"],
-                    quota_period_start=row.get("quota_period_start"),
-                    total_messages=row["total_messages"],
                     recovery_email_hash=row.get("recovery_email_hash"),
                     recovery_email_set_at=row.get("recovery_email_set_at"),
                     created_at=row["created_at"],
@@ -242,8 +231,8 @@ CREATE TABLE users (
     subscription_status VARCHAR(20) DEFAULT 'none',
     subscription_id VARCHAR(255),
     subscription_ends_at TIMESTAMP,
-    message_quota_used INT DEFAULT 0,
-    quota_period_start TIMESTAMP DEFAULT NOW(),
+    credit_balance INT DEFAULT 0,           -- v3.2.2+ credit system
+    credit_cap INT DEFAULT 50,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(oauth_provider, oauth_id)

@@ -17,7 +17,6 @@ PRIVACY-FIRST DATA MODEL:
 - NO personally identifying information (PII) is stored
 - oauth_id is a SHA-256 hash (cannot be reversed to original OAuth ID)
 - recovery_email_hash is SHA-256 (user's optional recovery email, hashed)
-- total_messages tracks lifetime usage for recovery email prompt (at 500)
 
 Tables:
 - users: Hashed OAuth identity + Stripe customer ID + subscription status + quota tracking
@@ -266,7 +265,6 @@ async def _create_tables():
     - oauth_id stores HASHED OAuth IDs (SHA-256), not raw IDs
     - email column kept for migration but will be deprecated
     - recovery_email_hash for optional account recovery (hashed)
-    - total_messages for 500-message recovery email prompt
     """
     if not _pool:
         return
@@ -283,62 +281,33 @@ async def _create_tables():
                 subscription_status VARCHAR(20) DEFAULT 'none',
                 subscription_id VARCHAR(255),
                 subscription_ends_at TIMESTAMP,
-                message_quota_used INT DEFAULT 0,
-                quota_period_start TIMESTAMP DEFAULT NOW(),
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW(),
                 UNIQUE(oauth_provider, oauth_id)
             );
-            
-            CREATE INDEX IF NOT EXISTS idx_users_stripe_customer 
+
+            CREATE INDEX IF NOT EXISTS idx_users_stripe_customer
                 ON users(stripe_customer_id);
-            
-            CREATE INDEX IF NOT EXISTS idx_users_oauth 
+
+            CREATE INDEX IF NOT EXISTS idx_users_oauth
                 ON users(oauth_provider, oauth_id);
         """)
-        
-        # Add quota columns if they don't exist (migration for existing DBs)
-        await conn.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'message_quota_used'
-                ) THEN
-                    ALTER TABLE users ADD COLUMN message_quota_used INT DEFAULT 0;
-                END IF;
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'quota_period_start'
-                ) THEN
-                    ALTER TABLE users ADD COLUMN quota_period_start TIMESTAMP DEFAULT NOW();
-                END IF;
-            END $$;
-        """)
-        
+
         # PRIVACY: Add anonymous auth columns
         await conn.execute("""
             DO $$
             BEGIN
-                -- Total lifetime messages (for 500-message recovery email prompt)
+                -- Recovery email (hashed) - optional for account recovery
                 IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'total_messages'
-                ) THEN
-                    ALTER TABLE users ADD COLUMN total_messages BIGINT DEFAULT 0;
-                END IF;
-                
-                -- Recovery email (hashed) - optional, prompted at 500 messages
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_name = 'users' AND column_name = 'recovery_email_hash'
                 ) THEN
                     ALTER TABLE users ADD COLUMN recovery_email_hash VARCHAR(64);
                 END IF;
-                
+
                 -- When recovery email was set (for user info display)
                 IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_name = 'users' AND column_name = 'recovery_email_set_at'
                 ) THEN
                     ALTER TABLE users ADD COLUMN recovery_email_set_at TIMESTAMP;
@@ -404,7 +373,7 @@ async def _create_tables():
         # If using a restricted role (transparency_reader), they only have SELECT on this view
         await conn.execute("""
             CREATE OR REPLACE VIEW transparency_users AS
-            SELECT 
+            SELECT
                 '•••' as id,
                 oauth_provider,
                 LEFT(oauth_id, 8) || '...' as oauth_id,
@@ -412,9 +381,6 @@ async def _create_tables():
                 '•••' as subscription_status,
                 CASE WHEN subscription_id IS NOT NULL THEN '•••' ELSE NULL END as subscription_id,
                 CASE WHEN subscription_ends_at IS NOT NULL THEN '•••' ELSE NULL END as subscription_ends_at,
-                '•••' as message_quota_used,
-                CASE WHEN quota_period_start IS NOT NULL THEN '•••' ELSE NULL END as quota_period_start,
-                '•••' as total_messages,
                 CASE WHEN recovery_email_hash IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_hash,
                 CASE WHEN recovery_email_set_at IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_set_at,
                 '•••' as created_at,
@@ -711,8 +677,7 @@ async def get_user_by_oauth(provider: str, oauth_id: str) -> Optional[dict]:
             SELECT id, oauth_provider, oauth_id, stripe_customer_id,
                    subscription_status, subscription_id, subscription_ends_at,
                    subscription_tier,
-                   message_quota_used, quota_period_start,
-                   total_messages, recovery_email_hash, recovery_email_set_at,
+                   recovery_email_hash, recovery_email_set_at,
                    account_status, brand, is_anonymous,
                    credit_balance, credit_cap, last_credit_refresh,
                    credits_earned_total, credits_spent_total,
@@ -813,8 +778,7 @@ async def get_user_by_stripe_customer(customer_id: str) -> Optional[dict]:
             SELECT id, oauth_provider, oauth_id, stripe_customer_id,
                    subscription_status, subscription_id, subscription_ends_at,
                    subscription_tier,
-                   message_quota_used, quota_period_start,
-                   total_messages, recovery_email_hash, recovery_email_set_at,
+                   recovery_email_hash, recovery_email_set_at,
                    account_status, brand, is_anonymous,
                    credit_balance, credit_cap, last_credit_refresh,
                    credits_earned_total, credits_spent_total,
@@ -842,8 +806,7 @@ async def get_user_by_recovery_email(email: str) -> Optional[dict]:
             """
             SELECT id, oauth_provider, oauth_id, stripe_customer_id,
                    subscription_status, subscription_id, subscription_ends_at,
-                   message_quota_used, quota_period_start,
-                   total_messages, recovery_email_hash, recovery_email_set_at,
+                   recovery_email_hash, recovery_email_set_at,
                    created_at, updated_at
             FROM users
             WHERE recovery_email_hash = $1
@@ -892,8 +855,7 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None,
                 WHERE oauth_provider = $1 AND oauth_id = $2
                 RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                           subscription_status, subscription_id, subscription_ends_at,
-                          message_quota_used, quota_period_start,
-                          total_messages, recovery_email_hash, recovery_email_set_at,
+                          recovery_email_hash, recovery_email_set_at,
                           created_at, updated_at
                 """,
                 provider, oauth_id
@@ -933,13 +895,12 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None,
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO users (oauth_provider, oauth_id, total_messages, brand,
+            INSERT INTO users (oauth_provider, oauth_id, brand,
                                credit_balance, credit_cap, last_credit_refresh)
-            VALUES ($1, $2, 0, $3, $4, $5, NOW())
+            VALUES ($1, $2, $3, $4, $5, NOW())
             RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                       subscription_status, subscription_id, subscription_ends_at,
-                      message_quota_used, quota_period_start,
-                      total_messages, recovery_email_hash, recovery_email_set_at,
+                      recovery_email_hash, recovery_email_set_at,
                       credit_balance, credit_cap, last_credit_refresh,
                       created_at, updated_at, brand
             """,
@@ -983,9 +944,9 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
         # This prevents gaming: anonymous → sign in → sign out → use anonymous again
         row = await conn.fetchrow(
             """
-            SELECT id, oauth_provider, oauth_id, message_quota_used,
-                   quota_period_start, is_anonymous, anonymous_fingerprint,
-                   subscription_status, subscription_tier, total_messages,
+            SELECT id, oauth_provider, oauth_id,
+                   is_anonymous, anonymous_fingerprint,
+                   subscription_status, subscription_tier,
                    credit_balance, credit_cap, last_credit_refresh,
                    created_at, updated_at, account_status
             FROM users
@@ -1006,17 +967,15 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
                 oauth_id,
                 is_anonymous,
                 anonymous_fingerprint,
-                message_quota_used,
-                total_messages,
                 credit_balance,
                 credit_cap,
                 last_credit_refresh,
                 credits_earned_total
             )
-            VALUES ('anonymous', $1, TRUE, $1, 0, 0, $2, $2, NOW(), $2)
-            RETURNING id, oauth_provider, oauth_id, message_quota_used,
-                      quota_period_start, is_anonymous, anonymous_fingerprint,
-                      subscription_status, subscription_tier, total_messages,
+            VALUES ('anonymous', $1, TRUE, $1, $2, $2, NOW(), $2)
+            RETURNING id, oauth_provider, oauth_id,
+                      is_anonymous, anonymous_fingerprint,
+                      subscription_status, subscription_tier,
                       credit_balance, credit_cap, last_credit_refresh,
                       created_at, updated_at, account_status
             """,
@@ -1081,8 +1040,7 @@ async def promote_anonymous_to_authenticated(
                 WHERE id = $3
                 RETURNING id, oauth_provider, oauth_id, stripe_customer_id,
                           subscription_status, subscription_id, subscription_ends_at,
-                          message_quota_used, quota_period_start,
-                          total_messages, recovery_email_hash, recovery_email_set_at,
+                          recovery_email_hash, recovery_email_set_at,
                           created_at, updated_at, account_status, subscription_tier,
                           is_anonymous, promoted_at, brand
                 """,
@@ -1090,7 +1048,7 @@ async def promote_anonymous_to_authenticated(
             )
             logger.info(
                 f"Promoted anonymous user {anon_user['id']} to {provider}:{oauth_id[:16]}... "
-                f"(carried over {anon_user['message_quota_used']} messages, kept fingerprint, brand={brand})"
+                f"(kept fingerprint, brand={brand})"
             )
             return dict(row)
         else:
@@ -1394,28 +1352,24 @@ async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = No
 
 async def _initialize_credit_balance(user: dict, is_paid: bool, tier: Optional[str], is_anonymous: bool) -> int:
     """Initialize credit_balance for users who haven't been migrated yet.
-    
+
     Called when credit_balance is NULL (pre-v3.2.2 users).
-    Converts existing message_quota_used to credit_balance.
+    v3.4.0: Legacy quota fields removed, users get full initial credits.
     """
     if not _pool:
         return 0
-    
+
     # Calculate initial credits based on user type
     initial_credits = get_initial_credits_for_user(tier, is_paid, is_anonymous)
     credit_cap = get_credit_cap_for_user(tier, is_paid, is_anonymous)
-    
-    # For existing users, deduct their already-used messages from initial credits
-    message_quota_used = user.get('message_quota_used', 0) or 0
-    credit_balance = max(0, initial_credits - message_quota_used)
-    
-    # Cap at the maximum
-    credit_balance = min(credit_balance, credit_cap)
-    
+
+    # Initialize with full credits (capped at maximum)
+    credit_balance = min(initial_credits, credit_cap)
+
     async with _pool.acquire() as conn:
         await conn.execute(
             """
-            UPDATE users 
+            UPDATE users
             SET credit_balance = $2,
                 credit_cap = $3,
                 last_credit_refresh = NOW(),
@@ -1427,8 +1381,8 @@ async def _initialize_credit_balance(user: dict, is_paid: bool, tier: Optional[s
             credit_balance,
             credit_cap
         )
-    
-    logger.info(f"Initialized credit_balance for user {user['id']}: {credit_balance} (was {message_quota_used} used)")
+
+    logger.info(f"Initialized credit_balance for user {user['id']}: {credit_balance}")
     return credit_balance
 
 
@@ -1490,10 +1444,9 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
             UPDATE users
             SET credit_balance = credit_balance - $3,
                 credits_spent_total = COALESCE(credits_spent_total, 0) + $3,
-                total_messages = COALESCE(total_messages, 0) + $3,
                 updated_at = NOW()
             WHERE oauth_provider = $1 AND oauth_id = $2
-            RETURNING credit_balance, credits_spent_total, total_messages
+            RETURNING credit_balance, credits_spent_total
             """,
             provider, oauth_id, amount
         )
@@ -1510,7 +1463,6 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
         "credit_balance": new_balance,
         "credit_cap": credit_cap,
         "is_paid": is_paid,
-        "total_messages": row.get('total_messages', 0),
         # Legacy fields for backward compatibility
         "used": 0,
         "limit": credit_cap,
@@ -1559,7 +1511,7 @@ async def add_subscription_credits(stripe_customer_id: str, tier: str) -> Option
                 credits_earned_total = COALESCE(credits_earned_total, 0) + $2,
                 updated_at = NOW()
             WHERE stripe_customer_id = $1
-            RETURNING id, credit_balance, credit_cap, credits_earned_total, total_messages
+            RETURNING id, credit_balance, credit_cap, credits_earned_total
             """,
             stripe_customer_id,
             credits_to_add,
@@ -1712,15 +1664,14 @@ async def deduct_credits(provider: str, oauth_id: str, amount: int = 1) -> Optio
                          provider, oauth_id[:16], row['credit_balance'] if row else 0, amount)
             return None
         
-        # Deduct credits and increment total_messages
+        # Deduct credits
         row = await conn.fetchrow(
             """
             UPDATE users
             SET credit_balance = credit_balance - $3,
-                total_messages = COALESCE(total_messages, 0) + $3,
                 updated_at = NOW()
             WHERE oauth_provider = $1 AND oauth_id = $2
-            RETURNING id, credit_balance, total_messages
+            RETURNING id, credit_balance
             """,
             provider, oauth_id, amount
         )
@@ -1765,7 +1716,7 @@ async def get_user_quota_with_credits(
     if brand == "hushhush" and credit_balance > 0:
         # Credits model: user has purchased credits
         return {
-            "used": user.get("total_messages") or 0,  # Lifetime total for reference
+            "used": 0,
             "limit": credit_balance,  # Current balance is the "limit"
             "remaining": credit_balance,
             "period_ends_at": None,  # Credits don't expire
@@ -1784,68 +1735,15 @@ async def get_user_quota_with_credits(
         is_paid = False
         tier = None
     
-    # Determine quota limit
-    limit = get_quota_limit_for_tier(tier, is_paid, brand)
-    
-    # Get quota usage
-    message_quota_used = user.get("message_quota_used") or 0
-    is_lifetime = user.get("is_lifetime_quota", True)  # Default to lifetime for free users
-    
-    # For free users with lifetime quota
-    if not is_paid and is_lifetime:
-        # v3.2.0: Hushhush free users get weekly refresh (+5/week)
-        if brand == "hushhush":
-            # Calculate weekly refreshes since account creation or last reset
-            quota_period_start = user.get("quota_period_start") or user.get("created_at") or datetime.now()
-            weeks_elapsed = max(0, (datetime.now() - quota_period_start).days // WEEKLY_REFRESH_DAYS)
-            
-            # Total allowance = base + (weeks * weekly_refresh)
-            # Cap at reasonable maximum to prevent abuse (e.g., 100 max from refreshes)
-            max_refresh_weeks = 15  # Cap at 75 additional messages from refreshes
-            effective_weeks = min(weeks_elapsed, max_refresh_weeks)
-            total_allowance = FREE_TIER_QUOTA + (effective_weeks * SIGNED_IN_WEEKLY_REFRESH)
-            
-            # Calculate next refresh date
-            next_refresh_at = quota_period_start + timedelta(days=((weeks_elapsed + 1) * WEEKLY_REFRESH_DAYS))
-            
-            return {
-                "used": message_quota_used,
-                "limit": total_allowance,
-                "remaining": max(0, total_allowance - message_quota_used),
-                "period_ends_at": next_refresh_at.isoformat(),  # Next weekly refresh
-                "is_paid": False,
-                "credit_balance": credit_balance,
-                "weekly_refresh": SIGNED_IN_WEEKLY_REFRESH,
-            }
-        
-        # Botchat: pure lifetime cap (no refresh)
-        return {
-            "used": message_quota_used,
-            "limit": limit,
-            "remaining": max(0, limit - message_quota_used),
-            "period_ends_at": None,  # Lifetime, no reset
-            "is_paid": False,
-            "credit_balance": credit_balance,
-        }
-    
-    # For paid users, handle period reset
-    quota_period_start = user.get("quota_period_start") or datetime.now()
-    period_ends_at = None
-    
-    if is_paid and sub_ends_at:
-        period_ends_at = sub_ends_at
-        if datetime.now() > sub_ends_at:
-            message_quota_used = 0  # Would be reset
-    else:
-        period_ends_at = quota_period_start + timedelta(days=QUOTA_PERIOD_DAYS)
-        if datetime.now() > period_ends_at:
-            message_quota_used = 0  # Would be reset
-    
+    # v3.4.0: All quota is now handled via credit_balance system
+    # Legacy message_quota_used/quota_period_start fields removed
+    credit_cap = user.get("credit_cap") or FREE_SIGNED_IN_CREDIT_CAP
+
     return {
-        "used": message_quota_used,
-        "limit": limit,
-        "remaining": max(0, limit - message_quota_used),
-        "period_ends_at": period_ends_at.isoformat() if period_ends_at else None,
+        "used": 0,
+        "limit": credit_cap,
+        "remaining": credit_balance,
+        "period_ends_at": sub_ends_at.isoformat() if sub_ends_at else None,
         "is_paid": is_paid,
         "credit_balance": credit_balance,
     }
@@ -1873,8 +1771,8 @@ async def set_recovery_email(provider: str, oauth_id: str, email: str) -> dict:
                 recovery_email_set_at = NOW(),
                 updated_at = NOW()
             WHERE oauth_provider = $1 AND oauth_id = $2
-            RETURNING id, oauth_provider, oauth_id, recovery_email_hash, 
-                      recovery_email_set_at, total_messages
+            RETURNING id, oauth_provider, oauth_id, recovery_email_hash,
+                      recovery_email_set_at
             """,
             provider, oauth_id, email_hash
         )
@@ -1896,7 +1794,7 @@ async def remove_recovery_email(provider: str, oauth_id: str) -> dict:
                 recovery_email_set_at = NULL,
                 updated_at = NOW()
             WHERE oauth_provider = $1 AND oauth_id = $2
-            RETURNING id, oauth_provider, oauth_id, total_messages
+            RETURNING id, oauth_provider, oauth_id
             """,
             provider, oauth_id
         )
@@ -1907,37 +1805,32 @@ async def remove_recovery_email(provider: str, oauth_id: str) -> dict:
 
 async def get_user_privacy_info(provider: str, oauth_id: str) -> Optional[dict]:
     """Get user's privacy-related info for settings display.
-    
+
     Returns:
     - has_recovery_email: bool
     - recovery_email_set_at: datetime or None
-    - total_messages: int
-    - should_prompt_recovery: bool (true if >= 500 messages and no recovery email)
     """
     if not _pool:
         return None
-    
+
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT total_messages, recovery_email_hash, recovery_email_set_at
+            SELECT recovery_email_hash, recovery_email_set_at
             FROM users
             WHERE oauth_provider = $1 AND oauth_id = $2
             """,
             provider, oauth_id
         )
-        
+
         if not row:
             return None
-        
-        total = row['total_messages'] or 0
+
         has_recovery = row['recovery_email_hash'] is not None
-        
+
         return {
             "has_recovery_email": has_recovery,
             "recovery_email_set_at": row['recovery_email_set_at'].isoformat() if row['recovery_email_set_at'] else None,
-            "total_messages": total,
-            "should_prompt_recovery": total >= 500 and not has_recovery,
         }
 
 
@@ -2034,7 +1927,7 @@ async def get_pending_strikes() -> list[dict]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT 
+            SELECT
                 s.id as strike_id,
                 s.user_id,
                 s.reason,
@@ -2043,8 +1936,7 @@ async def get_pending_strikes() -> list[dict]:
                 u.oauth_provider,
                 LEFT(u.oauth_id, 8) || '...' as oauth_id_prefix,
                 u.subscription_status,
-                u.stripe_customer_id,
-                u.total_messages
+                u.stripe_customer_id
             FROM strikes s
             JOIN users u ON s.user_id = u.id
             WHERE s.resolved_at IS NULL
@@ -2377,8 +2269,7 @@ async def get_user_by_email_hash(email_hash: str) -> Optional[dict]:
             """
             SELECT id, oauth_provider, oauth_id, stripe_customer_id,
                    subscription_status, subscription_id, subscription_ends_at,
-                   message_quota_used, quota_period_start,
-                   total_messages, recovery_email_hash, recovery_email_set_at,
+                   recovery_email_hash, recovery_email_set_at,
                    created_at, updated_at, account_status
             FROM users
             WHERE oauth_provider = 'email'

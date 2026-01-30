@@ -29,7 +29,50 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	const dispatch = createEventDispatcher<{
 		reply: { messageId: string; botId: string };
 		export: { message: Message };
+		actionsNearBottom: { visible: boolean };
 	}>();
+
+	// Track if action buttons are visible on a message near the bottom of the viewport
+	let actionsNearBottom = false;
+	let dodgeResetTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	function checkIfNearBottom(element: HTMLElement): boolean {
+		const rect = element.getBoundingClientRect();
+		const viewportHeight = window.innerHeight;
+		// Consider "near bottom" if within 250px of the bottom of the viewport
+		return rect.bottom > viewportHeight - 250;
+	}
+
+	function handleMessageInteraction(event: Event, messageElement: HTMLElement) {
+		// Only care about mobile
+		if (window.innerWidth >= 768) return;
+
+		// Clear any pending reset
+		if (dodgeResetTimeout) {
+			clearTimeout(dodgeResetTimeout);
+			dodgeResetTimeout = null;
+		}
+
+		const isNearBottom = checkIfNearBottom(messageElement);
+		if (isNearBottom !== actionsNearBottom) {
+			actionsNearBottom = isNearBottom;
+			dispatch('actionsNearBottom', { visible: isNearBottom });
+		}
+	}
+
+	function handleMessageLeave() {
+		// Only care about mobile
+		if (window.innerWidth >= 768) return;
+
+		if (actionsNearBottom) {
+			// Delay reset to give user time to tap the action buttons
+			dodgeResetTimeout = setTimeout(() => {
+				actionsNearBottom = false;
+				dispatch('actionsNearBottom', { visible: false });
+				dodgeResetTimeout = null;
+			}, 2000);
+		}
+	}
 
 	// Track which message is showing "Copied!" tooltip
 	let copiedMessageId: string | null = null;
@@ -282,7 +325,14 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	
 	{#each messages as msg (msg.id)}
 		<div class={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-			<div class="relative max-w-[90%] md:max-w-2xl group">
+			<!-- svelte-ignore a11y-no-static-element-interactions -->
+			<div
+				class="relative max-w-[90%] md:max-w-2xl group"
+				on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget)}
+				on:mouseenter={(e) => handleMessageInteraction(e, e.currentTarget)}
+				on:mouseleave={handleMessageLeave}
+				on:touchend={handleMessageLeave}
+			>
 				<div
 					class={`px-3 md:px-4 py-2.5 md:py-3 rounded-2xl md:rounded-lg ${
 						msg.role === 'user'
