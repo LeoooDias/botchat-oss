@@ -371,8 +371,11 @@ async def _create_tables():
         # TRANSPARENCY VIEW: Pre-masked view of users table
         # This view does all masking in PostgreSQL - the data returned is already safe
         # If using a restricted role (transparency_reader), they only have SELECT on this view
+        # NOTE: Using DROP + CREATE instead of CREATE OR REPLACE because PostgreSQL
+        # doesn't allow removing columns from a view with CREATE OR REPLACE
+        await conn.execute("DROP VIEW IF EXISTS transparency_users")
         await conn.execute("""
-            CREATE OR REPLACE VIEW transparency_users AS
+            CREATE VIEW transparency_users AS
             SELECT
                 '•••' as id,
                 oauth_provider,
