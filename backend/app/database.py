@@ -369,7 +369,7 @@ async def _create_tables():
         """)
         
         # TRANSPARENCY VIEW: Pre-masked view of users table
-        # This view does all masking in PostgreSQL - the data returned is already safe
+        # This view shows the COMPLETE schema of what we store, with values masked for privacy
         # If using a restricted role (transparency_reader), they only have SELECT on this view
         # NOTE: Using DROP + CREATE instead of CREATE OR REPLACE because PostgreSQL
         # doesn't allow removing columns from a view with CREATE OR REPLACE
@@ -377,18 +377,33 @@ async def _create_tables():
         await conn.execute("""
             CREATE VIEW transparency_users AS
             SELECT
+                -- Core identity (masked)
                 '•••' as id,
                 oauth_provider,
                 LEFT(oauth_id, 8) || '...' as oauth_id,
+                -- Stripe billing (masked)
                 CASE WHEN stripe_customer_id IS NOT NULL THEN 'cus_•••••' ELSE NULL END as stripe_customer_id,
                 '•••' as subscription_status,
-                CASE WHEN subscription_id IS NOT NULL THEN '•••' ELSE NULL END as subscription_id,
+                CASE WHEN subscription_id IS NOT NULL THEN 'sub_•••••' ELSE NULL END as subscription_id,
                 CASE WHEN subscription_ends_at IS NOT NULL THEN '•••' ELSE NULL END as subscription_ends_at,
+                subscription_tier,
+                -- Credit system (v3.2.2) - show structure, mask values
+                '•••' as credit_balance,
+                '•••' as credit_cap,
+                CASE WHEN last_credit_refresh IS NOT NULL THEN '•••' ELSE NULL END as last_credit_refresh,
+                '•••' as credits_earned_total,
+                '•••' as credits_spent_total,
+                -- Anonymous user tracking (v3.0.1) - show structure, mask values
+                is_anonymous,
+                CASE WHEN anonymous_fingerprint IS NOT NULL THEN LEFT(anonymous_fingerprint, 8) || '...' ELSE NULL END as anonymous_fingerprint,
+                CASE WHEN promoted_at IS NOT NULL THEN '•••' ELSE NULL END as promoted_at,
+                -- Recovery email (masked)
                 CASE WHEN recovery_email_hash IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_hash,
                 CASE WHEN recovery_email_set_at IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_set_at,
+                -- Timestamps and status (masked)
                 '•••' as created_at,
                 '•••' as updated_at,
-                '•••' as account_status
+                account_status
             FROM users;
         """)
         
