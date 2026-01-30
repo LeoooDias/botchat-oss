@@ -49,9 +49,22 @@ logger = logging.getLogger(__name__)
 # Platform API key (from environment/secrets)
 PLATFORM_OPENAI_KEY = os.environ.get("PLATFORM_OPENAI_API_KEY", "")
 
-# Request timeout (seconds) - extended timeout for GCP→OpenAI latency issues
+# Request timeout (seconds) - reduced now that Azure proxy fixes latency
 # Can be overridden via environment variable for different deployment contexts
-DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("OPENAI_REQUEST_TIMEOUT", "360"))
+DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("OPENAI_REQUEST_TIMEOUT", "120"))
+
+# -----------------------------
+# Azure Proxy Routing (TTFT Optimization)
+# -----------------------------
+# GCP Cloud Run → OpenAI has 9-15s TTFT due to IP-based throttling.
+# Routing through Azure Container Apps reduces this to <2s.
+#
+# Set OPENAI_ROUTING=azure_proxy to enable Azure routing.
+# See docs/OPENAI_LATENCY_INVESTIGATION.md for details.
+
+OPENAI_ROUTING = os.environ.get("OPENAI_ROUTING", "direct")  # direct | azure_proxy
+AZURE_PROXY_URL = os.environ.get("AZURE_PROXY_URL", "")  # e.g., https://ca-openai-proxy.xxx.azurecontainerapps.io/v1
+AZURE_PROXY_AUTH = os.environ.get("AZURE_PROXY_AUTH", "")  # Proxy authentication token
 
 # -----------------------------
 # Client Singleton (Connection Pooling)
@@ -74,6 +87,10 @@ def _get_openai_client() -> OpenAI:
     This ensures connection pooling across requests, dramatically improving
     Time-To-First-Token (TTFT) by reusing HTTP connections.
 
+    Routing modes:
+    - direct: Connect directly to OpenAI API (high latency from GCP)
+    - azure_proxy: Route through Azure Container Apps proxy (low latency)
+
     Returns:
         Shared OpenAI client instance
 
@@ -86,21 +103,43 @@ def _get_openai_client() -> OpenAI:
         if not PLATFORM_OPENAI_KEY:
             raise OpenAIConfigError("No OpenAI platform API key available")
 
-        _OPENAI_CLIENT = OpenAI(
-            api_key=PLATFORM_OPENAI_KEY,
-            timeout=DEFAULT_REQUEST_TIMEOUT,
-            default_headers={
-                "X-OpenAI-No-Store": "true",  # Request ZDR (best-effort, not guaranteed)
-                # Minimize SDK telemetry headers (privacy-forward)
-                "X-Stainless-OS": "private",
-                "X-Stainless-Arch": "private",
-                "X-Stainless-Runtime": "private",
-                "X-Stainless-Runtime-Version": "private",
-                "X-Stainless-Package-Version": "private",
-                "X-Stainless-Lang": "private",
-            }
-        )
-        logger.info("🏢 OpenAI client initialized (connection pooling enabled)")
+        # Base headers for all requests
+        default_headers = {
+            "X-OpenAI-No-Store": "true",  # Request ZDR (best-effort, not guaranteed)
+            # Minimize SDK telemetry headers (privacy-forward)
+            "X-Stainless-OS": "private",
+            "X-Stainless-Arch": "private",
+            "X-Stainless-Runtime": "private",
+            "X-Stainless-Runtime-Version": "private",
+            "X-Stainless-Package-Version": "private",
+            "X-Stainless-Lang": "private",
+        }
+
+        # Choose routing based on configuration
+        if OPENAI_ROUTING == "azure_proxy" and AZURE_PROXY_URL:
+            # Route through Azure Container Apps proxy for lower TTFT
+            # The proxy handles forwarding to OpenAI with proper auth
+            logger.info("🔀 OpenAI routing: Azure proxy (%s)", AZURE_PROXY_URL)
+
+            # Add proxy authentication header
+            if AZURE_PROXY_AUTH:
+                default_headers["X-Proxy-Auth"] = AZURE_PROXY_AUTH
+
+            _OPENAI_CLIENT = OpenAI(
+                api_key=PLATFORM_OPENAI_KEY,
+                base_url=AZURE_PROXY_URL,
+                timeout=DEFAULT_REQUEST_TIMEOUT,
+                default_headers=default_headers,
+            )
+        else:
+            # Direct connection to OpenAI (may have high TTFT from GCP)
+            logger.info("🏢 OpenAI routing: direct")
+
+            _OPENAI_CLIENT = OpenAI(
+                api_key=PLATFORM_OPENAI_KEY,
+                timeout=DEFAULT_REQUEST_TIMEOUT,
+                default_headers=default_headers,
+            )
 
     return _OPENAI_CLIENT
 
