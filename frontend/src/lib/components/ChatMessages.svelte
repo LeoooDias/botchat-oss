@@ -385,7 +385,8 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							</svg>
 						{:else}
 							<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+								<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+								<path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
 							</svg>
 						{/if}
 					</button>
@@ -398,25 +399,32 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 				</div>
 			</div>
 		{:else}
-			<!-- Assistant messages group - grid layout on desktop when multiple bots -->
-			<!-- Single bot: left-aligned with max-width. Multiple bots: 2-column grid that wraps -->
-			<div class={group.messages.length > 1 ? 'grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4' : 'flex flex-col'}>
+			<!-- Assistant messages group -->
+			<!-- Study mode: always single column (full width for dense content) -->
+			<!-- Chat/Ask with multiple bots: masonry 2-column layout using CSS columns -->
+			<!-- Single bot: left-aligned with max-width -->
+			{@const hasStudyMode = group.messages.some(m => m.mode === 'study')}
+			{@const useColumns = group.messages.length > 1 && !hasStudyMode}
+			<div class={useColumns ? 'md:columns-2 md:gap-6 space-y-3 md:space-y-0 md:pb-10 overflow-visible' : 'flex flex-col space-y-3'}>
 				{#each group.messages as msg (msg.id)}
 					<!-- svelte-ignore a11y-no-static-element-interactions -->
-					<div
-						class={`relative group ${group.messages.length > 1 ? '' : 'max-w-[90%] md:max-w-2xl'}`}
-						on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget)}
-						on:mouseenter={(e) => handleMessageInteraction(e, e.currentTarget)}
-						on:mouseleave={handleMessageLeave}
-						on:touchend={handleMessageLeave}
-					>
+					<!-- Outer wrapper for column spacing only -->
+					<div class={useColumns ? 'break-inside-avoid md:pb-8' : ''}>
+						<!-- Inner wrapper for relative positioning of buttons -->
 						<div
-							class={`px-3 md:px-4 py-2.5 md:py-3 rounded-2xl md:rounded-lg ${
-								msg.isError
-									? 'bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-bl-sm md:rounded-bl-none text-red-900 dark:text-red-100'
-									: 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-bl-sm md:rounded-bl-none text-gray-900 dark:text-gray-100'
-							}`}
+							class={`relative group ${useColumns ? '' : 'max-w-[90%] md:max-w-2xl'}`}
+							on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget)}
+							on:mouseenter={(e) => handleMessageInteraction(e, e.currentTarget)}
+							on:mouseleave={handleMessageLeave}
+							on:touchend={handleMessageLeave}
 						>
+							<div
+								class={`px-3 md:px-4 py-2.5 md:py-3 rounded-2xl md:rounded-lg ${
+									msg.isError
+										? 'bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-bl-sm md:rounded-bl-none text-red-900 dark:text-red-100'
+										: 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-bl-sm md:rounded-bl-none text-gray-900 dark:text-gray-100'
+								}`}
+							>
 							{#if getBotName(msg)}
 								<div class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-0.5">{getBotName(msg)}</div>
 							{/if}
@@ -511,7 +519,8 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 									</svg>
 								{:else}
 									<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+										<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+										<path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
 									</svg>
 								{/if}
 							</button>
@@ -522,6 +531,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 								</div>
 							{/if}
 						{/if}
+						</div>
 					</div>
 				{/each}
 			</div>
