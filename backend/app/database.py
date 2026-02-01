@@ -371,11 +371,10 @@ async def _create_tables():
         # TRANSPARENCY VIEW: Pre-masked view of users table
         # This view shows the COMPLETE schema of what we store, with values masked for privacy
         # If using a restricted role (transparency_reader), they only have SELECT on this view
-        # NOTE: Using DROP + CREATE instead of CREATE OR REPLACE because PostgreSQL
-        # doesn't allow removing columns from a view with CREATE OR REPLACE
-        await conn.execute("DROP VIEW IF EXISTS transparency_users")
+        # NOTE: Using CREATE OR REPLACE for atomic, race-condition-safe view creation.
+        # If you need to remove columns from the view, you must DROP first (manually).
         await conn.execute("""
-            CREATE VIEW transparency_users AS
+            CREATE OR REPLACE VIEW transparency_users AS
             SELECT
                 -- Core identity (masked)
                 '•••' as id,
