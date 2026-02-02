@@ -400,9 +400,9 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 			</div>
 		{:else}
 			<!-- Assistant messages group -->
-			<!-- Study mode: always single column (full width for dense content) -->
+			<!-- Study mode: always single column, full width for dense content like tables -->
 			<!-- Chat/Ask with multiple bots: masonry 2-column layout using CSS columns -->
-			<!-- Single bot: left-aligned with max-width -->
+			<!-- Single bot (non-study): left-aligned with max-width -->
 			{@const hasStudyMode = group.messages.some(m => m.mode === 'study')}
 			{@const useColumns = group.messages.length > 1 && !hasStudyMode}
 			<div class={useColumns ? 'md:columns-2 md:gap-6 space-y-3 md:space-y-0 md:pb-10 overflow-visible' : 'flex flex-col space-y-3'}>
@@ -411,8 +411,10 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<!-- Outer wrapper for column spacing only -->
 					<div class={useColumns ? 'break-inside-avoid md:pb-8' : ''}>
 						<!-- Inner wrapper for relative positioning of buttons -->
+						<!-- Study mode: full width for better table/content rendering -->
+						<!-- Non-study: constrain width for readability -->
 						<div
-							class={`relative group ${useColumns ? '' : 'max-w-[90%] md:max-w-2xl'}`}
+							class={`relative group ${useColumns ? '' : msg.mode === 'study' ? '' : 'max-w-[90%] md:max-w-2xl'}`}
 							on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget)}
 							on:mouseenter={(e) => handleMessageInteraction(e, e.currentTarget)}
 							on:mouseleave={handleMessageLeave}
