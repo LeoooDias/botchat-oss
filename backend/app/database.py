@@ -47,7 +47,7 @@ class AccountDeletedException(Exception):
 # Credit caps per user type - generous limits to drive adoption
 ANONYMOUS_CREDIT_CAP = 25
 FREE_SIGNED_IN_CREDIT_CAP = 50
-PAID_CREDIT_CAP = 2000
+PAID_CREDIT_CAP = 3000  # V3.8.11: Increased from 2000
 
 # Credit grants - let users experience full value
 ANONYMOUS_INITIAL_CREDITS = 25
