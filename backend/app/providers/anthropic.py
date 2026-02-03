@@ -45,8 +45,9 @@ logger = logging.getLogger(__name__)
 PLATFORM_ANTHROPIC_KEY = os.environ.get("PLATFORM_ANTHROPIC_API_KEY", "")
 
 # Request timeout (seconds) - generous default for streaming responses
+# Study mode with multiple bots can take a while, especially with Opus models
 # Can be overridden via environment variable for different deployment contexts
-DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("ANTHROPIC_REQUEST_TIMEOUT", "120"))
+DEFAULT_REQUEST_TIMEOUT = float(os.environ.get("ANTHROPIC_REQUEST_TIMEOUT", "300"))
 
 # Vision support: All Claude 3+ models support vision
 # We use a blocklist approach - only block models known to NOT support vision
