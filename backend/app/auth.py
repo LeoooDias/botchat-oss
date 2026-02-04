@@ -319,8 +319,8 @@ def check_user_allowed(hashed_id: str) -> None:
     if is_allowed:
         return
     
-    # Only log truncated hash for privacy
-    logger.warning("Access denied for hashed_id: %s (not in allowlist)", hashed_id[:16] + "...")
+    # PRIVACY: Don't log OAuth IDs (even partial/hashed)
+    logger.warning("Access denied: user not in allowlist")
     raise HTTPException(
         status_code=403,
         detail="Access denied. This environment is restricted to authorized users only."

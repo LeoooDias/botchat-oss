@@ -2273,6 +2273,30 @@ async def cleanup_expired_magic_links() -> int:
         return count
 
 
+async def cleanup_expired_tombstones() -> int:
+    """Delete tombstones past their purge date (Privacy Policy: 90-day retention).
+
+    Tombstones with permanent_ban=TRUE have purge_after=NULL and are never deleted.
+    Should be called periodically (e.g., daily cron job).
+    Returns number of deleted rows.
+    """
+    if not _pool:
+        raise RuntimeError("Database not initialized")
+
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM deleted_accounts
+            WHERE purge_after IS NOT NULL
+              AND purge_after < NOW()
+            """
+        )
+        count = int(result.split()[-1])
+        if count > 0:
+            logger.info("Cleaned up %d expired tombstones", count)
+        return count
+
+
 async def get_user_by_email_hash(email_hash: str) -> Optional[dict]:
     """Get user by hashed email (for email provider).
 
