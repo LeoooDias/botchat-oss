@@ -111,21 +111,38 @@ def _get_pepper(secret_name: str, env_var: str) -> str:
 RECOVERY_EMAIL_SALT = _get_pepper("recovery-email-salt", "RECOVERY_EMAIL_SALT")
 
 
-def hash_recovery_email(email: str) -> str:
-    """Hash a recovery email address.
-    
-    Uses SHA-256 with salt. The email is normalized (lowercase, trimmed)
-    before hashing to ensure consistent lookups.
+def hash_recovery_email_from_client(client_hash: str) -> str:
+    """Re-hash a client-provided recovery email hash with server salt.
+
+    Two-layer hashing for privacy:
+    - Layer 1 (frontend): SHA256("botchat-recovery:" + normalized_email)
+    - Layer 2 (backend):  SHA256(RECOVERY_EMAIL_SALT + ":" + client_hash)
+
+    The backend never sees the plaintext email.
     """
     if not RECOVERY_EMAIL_SALT:
         logger.warning("RECOVERY_EMAIL_SALT not set - using unsalted hash (insecure)")
         salt = "default-salt-insecure"
     else:
         salt = RECOVERY_EMAIL_SALT
-    
-    normalized = email.strip().lower()
-    data = f"{salt}:{normalized}".encode('utf-8')
+
+    data = f"{salt}:{client_hash}".encode('utf-8')
     return hashlib.sha256(data).hexdigest()
+
+
+def hash_recovery_email_from_plaintext(email: str) -> str:
+    """Compute the full two-layer hash from a plaintext email.
+
+    Used only by manual recovery scripts (never by the backend in production).
+    Replicates both frontend and backend hashing steps.
+    """
+    # Layer 1: same as frontend SHA256("botchat-recovery:" + normalized_email)
+    normalized = email.strip().lower()
+    layer1_data = f"botchat-recovery:{normalized}".encode('utf-8')
+    client_hash = hashlib.sha256(layer1_data).hexdigest()
+
+    # Layer 2: server-side re-hash
+    return hash_recovery_email_from_client(client_hash)
 
 # Database URL from environment
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -808,15 +825,16 @@ async def get_user_by_stripe_customer(customer_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
-async def get_user_by_recovery_email(email: str) -> Optional[dict]:
+async def get_user_by_recovery_email(client_hash: str) -> Optional[dict]:
     """Get user by recovery email hash.
-    
+
     Used for account recovery when user loses access to OAuth provider.
+    Accepts a client-side hash (Layer 1) and re-hashes with server salt.
     """
     if not _pool:
         return None
-    
-    email_hash = hash_recovery_email(email)
+
+    email_hash = hash_recovery_email_from_client(client_hash)
     
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -877,8 +895,10 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None,
                 """,
                 provider, oauth_id
             )
-            return dict(row)
-    
+            result = dict(row)
+            result['is_new'] = False
+            return result
+
     # Check tombstone table - block re-registration if recently deleted or permanently banned
     async with _pool.acquire() as conn:
         tombstone = await conn.fetchrow(
@@ -924,7 +944,9 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None,
             provider, oauth_id, brand, 
             FREE_SIGNED_IN_INITIAL_CREDITS, FREE_SIGNED_IN_CREDIT_CAP
         )
-        return dict(row)
+        result = dict(row)
+        result['is_new'] = True
+        return result
 
 
 async def get_or_create_anonymous_user(fingerprint: str) -> dict:
@@ -1770,15 +1792,16 @@ async def get_user_quota_with_credits(
 # Recovery Email & Anonymous Auth
 # -----------------------------
 
-async def set_recovery_email(provider: str, oauth_id: str, email: str) -> dict:
-    """Set or update the user's recovery email (stored as hash).
-    
-    PRIVACY: Only the hash is stored, not the actual email.
+async def set_recovery_email_hash(provider: str, oauth_id: str, client_hash: str) -> dict:
+    """Set or update the user's recovery email hash.
+
+    PRIVACY: Accepts a client-side hash (frontend hashed the email).
+    Re-hashes with server salt before storing. Backend never sees plaintext.
     """
     if not _pool:
         raise RuntimeError("Database not initialized")
-    
-    email_hash = hash_recovery_email(email)
+
+    email_hash = hash_recovery_email_from_client(client_hash)
     
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(

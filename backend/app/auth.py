@@ -393,6 +393,7 @@ class OAuthCallbackRequest(BaseModel):
     redirect_uri: str
     id_token: Optional[str] = None  # Apple sends id_token via POST
     anonymous_fingerprint: Optional[str] = None  # v3.0.1: For merging anonymous usage
+    referral_code: Optional[str] = None  # v3.9.0: Referral system
 
 
 class AuthResponse(BaseModel):
