@@ -406,6 +406,7 @@ class AuthResponse(BaseModel):
 class MagicLinkRequest(BaseModel):
     """Request a magic link to be sent to email."""
     email: str
+    referral_code: Optional[str] = None  # v3.9.x: Persisted through magic link flow
 
 
 class MagicLinkVerifyRequest(BaseModel):

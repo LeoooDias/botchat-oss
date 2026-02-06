@@ -2171,6 +2171,7 @@ async def create_magic_link(
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     user_id: Optional[int] = None,
+    referral_code: Optional[str] = None,
 ) -> int:
     """Create a new magic link token.
 
@@ -2181,6 +2182,7 @@ async def create_magic_link(
         ip_address: Request IP for rate limiting
         user_agent: User agent for abuse detection
         user_id: User ID if already registered (NULL for new signups)
+        referral_code: Referral code from ?ref= URL param (persisted through email flow)
 
     Returns:
         Magic link ID
@@ -2193,13 +2195,13 @@ async def create_magic_link(
             """
             INSERT INTO magic_links (
                 email_hash, token_hash, expires_at,
-                ip_address, user_agent, user_id
+                ip_address, user_agent, user_id, referral_code
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id
             """,
             email_hash, token_hash, expires_at,
-            ip_address, user_agent, user_id
+            ip_address, user_agent, user_id, referral_code
         )
         return row["id"]
 
@@ -2215,7 +2217,7 @@ async def get_magic_link_by_token(token_hash: str) -> Optional[dict]:
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, email_hash, user_id, created_at, expires_at, used_at
+            SELECT id, email_hash, user_id, created_at, expires_at, used_at, referral_code
             FROM magic_links
             WHERE token_hash = $1
             AND used_at IS NULL
