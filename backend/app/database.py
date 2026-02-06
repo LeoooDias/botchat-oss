@@ -2195,15 +2195,28 @@ async def create_magic_link(
             """
             INSERT INTO magic_links (
                 email_hash, token_hash, expires_at,
-                ip_address, user_agent, user_id, referral_code
+                ip_address, user_agent, user_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
             """,
             email_hash, token_hash, expires_at,
-            ip_address, user_agent, user_id, referral_code
+            ip_address, user_agent, user_id
         )
-        return row["id"]
+        row_id = row["id"]
+
+        # Store referral code if provided (column added in v3.9.0 migration)
+        # Separate UPDATE so magic link creation isn't blocked if migration is pending
+        if referral_code:
+            try:
+                await conn.execute(
+                    "UPDATE magic_links SET referral_code = $1 WHERE id = $2",
+                    referral_code, row_id
+                )
+            except Exception:
+                pass  # Column doesn't exist yet — referral still works via localStorage
+
+        return row_id
 
 
 async def get_magic_link_by_token(token_hash: str) -> Optional[dict]:
@@ -2217,7 +2230,7 @@ async def get_magic_link_by_token(token_hash: str) -> Optional[dict]:
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, email_hash, user_id, created_at, expires_at, used_at, referral_code
+            SELECT id, email_hash, user_id, created_at, expires_at, used_at
             FROM magic_links
             WHERE token_hash = $1
             AND used_at IS NULL
@@ -2226,9 +2239,22 @@ async def get_magic_link_by_token(token_hash: str) -> Optional[dict]:
             token_hash
         )
 
-        if row:
-            return dict(row)
-        return None
+        if not row:
+            return None
+
+        result = dict(row)
+
+        # Try to fetch referral_code (column added in v3.9.0 migration)
+        try:
+            ref_row = await conn.fetchval(
+                "SELECT referral_code FROM magic_links WHERE id = $1",
+                result["id"]
+            )
+            result["referral_code"] = ref_row
+        except Exception:
+            result["referral_code"] = None  # Column doesn't exist yet
+
+        return result
 
 
 async def mark_magic_link_used(token_hash: str) -> bool:
