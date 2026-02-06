@@ -411,6 +411,7 @@ class MagicLinkRequest(BaseModel):
 class MagicLinkVerifyRequest(BaseModel):
     """Verify a magic link token."""
     token: str
+    referral_code: Optional[str] = None  # v3.9.x: Referral code from ?ref= URL param
 
 
 class MagicLinkResponse(BaseModel):
