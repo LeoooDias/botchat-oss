@@ -258,57 +258,6 @@ def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
         return image_bytes
 
 
-# Patterns that indicate raw PII was passed as user_id (should be hashed)
-_PII_PATTERNS_FOR_USER_ID = [
-    (r"^[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}$", "email"),  # Email addresses
-    (r"^\d{3}-\d{2}-\d{4}$", "SSN"),  # US SSN
-    (r"^\d{9}$", "SSN"),  # US SSN without dashes
-    (r"^\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4}$", "phone"),  # US phone
-    (r"^\d{16}$", "credit_card"),  # Credit card (16 digits)
-    (r"^\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}$", "credit_card"),  # Credit card with separators
-]
-
-
-def _validate_user_id(user_id: Optional[str]) -> Optional[str]:
-    """
-    Validate user_id to ensure it's not raw PII.
-    
-    User IDs should be hashed/opaque identifiers, NOT raw PII like email addresses.
-    This function rejects obvious PII patterns and returns None (effectively
-    disabling user tracking for that request) while logging a warning.
-    
-    Args:
-        user_id: The user identifier to validate
-        
-    Returns:
-        The user_id if valid, None if it appears to be PII
-    """
-    import re
-    
-    if not user_id:
-        return None
-    
-    # Check for obvious PII patterns
-    for pattern, pii_type in _PII_PATTERNS_FOR_USER_ID:
-        if re.match(pattern, user_id.strip()):
-            logger.warning(
-                "user_id appears to be raw PII (%s pattern detected). "
-                "Please use hashed identifiers. Ignoring user_id for this request.",
-                pii_type
-            )
-            return None
-    
-    # Additional heuristic: reject if it looks like a name (has spaces and common name patterns)
-    if " " in user_id and len(user_id) < 50:
-        logger.warning(
-            "user_id appears to be a name (contains spaces). "
-            "Please use hashed identifiers. Ignoring user_id for this request."
-        )
-        return None
-    
-    return user_id
-
-
 @dataclass
 class OpenAIConfig:
     """Configuration for OpenAI requests."""
@@ -355,13 +304,12 @@ class OpenAIProvider:
         max_tokens: int = 4000,
         file_data: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 1.0,
-        user_id: Optional[str] = None,
         pii_scrubber: Optional[Callable[[str], str]] = None,
         web_search_enabled: bool = False,
     ) -> Generator[str, None, Dict[str, Any]]:
         """
         Stream a response from OpenAI.
-        
+
         Args:
             message: User message
             model: Model name (e.g., "gpt-4o")
@@ -369,10 +317,6 @@ class OpenAIProvider:
             max_tokens: Maximum output tokens
             file_data: Optional list of file attachments [{bytes, mime_type, name}]
             temperature: Sampling temperature (0.0-2.0)
-            user_id: Ephemeral session ID (UUID v4) for privacy-preserving rate limiting.
-                    PRIVACY: This is a per-request random UUID, NOT the user's identity.
-                    Allows provider to rate-limit without correlating across sessions.
-                    Sent as safety_identifier to OpenAI.
             pii_scrubber: Optional callback function to scrub PII from messages
                          before sending to the API. Signature: (str) -> str
             web_search_enabled: Enable web search tool (uses Responses API)
@@ -397,18 +341,15 @@ class OpenAIProvider:
         
         # Build messages
         messages = self._build_messages(processed_message, model, processed_system, file_data)
-        
-        # Validate user_id to ensure it's not raw PII
-        validated_user_id = _validate_user_id(user_id)
-        
+
         # Track citations for web search
         citations: List[Dict[str, Any]] = []
-        
+
         # Web search uses Responses API (different from Chat Completions)
         if web_search_enabled:
             return (yield from self._stream_with_web_search(
-                processed_message, model, processed_system, max_tokens, 
-                temperature, validated_user_id
+                processed_message, model, processed_system, max_tokens,
+                temperature,
             ))
         
         # Build messages for Chat Completions API
@@ -429,12 +370,10 @@ class OpenAIProvider:
         # OpenAI's prompt caching requires a cache key to be set; without it, no caching occurs.
         # We intentionally do NOT set prompt_cache_key or prompt_cache_retention.
         # If OpenAI changes defaults in the future, we should revisit this.
-        
-        # Add validated user ID for privacy-preserving abuse monitoring
-        # This helps OpenAI with abuse detection without storing PII
-        if validated_user_id:
-            request_params["safety_identifier"] = validated_user_id
-        
+
+        # PRIVACY: No user_id / safety_identifier sent — zero identity leakage to OpenAI.
+        # Our backend handles rate limiting via the credit system.
+
         # Add optional parameters (some models don't support all params)
         if model not in NO_SYSTEM_INSTRUCTION_MODELS:
             request_params["max_completion_tokens"] = max_tokens
@@ -515,21 +454,19 @@ class OpenAIProvider:
         system_instruction: Optional[str],
         max_tokens: int,
         temperature: float,
-        user_id: Optional[str],
     ) -> Generator[str, None, Dict[str, Any]]:
         """
         Stream a response with web search using OpenAI Responses API.
-        
+
         The Responses API supports the web_search_preview tool, which enables
         the model to search the web and cite sources.
-        
+
         Args:
             message: User message
             model: Model name
             system_instruction: Optional system prompt
             max_tokens: Maximum output tokens
             temperature: Sampling temperature
-            user_id: Optional hashed user ID
             
         Yields:
             Text chunks
@@ -567,9 +504,8 @@ class OpenAIProvider:
             else:
                 request_params["max_output_tokens"] = max_tokens
             
-            if user_id:
-                request_params["user"] = user_id
-            
+            # PRIVACY: No user param sent — zero identity leakage
+
             logger.debug("OpenAI web search: using Responses API with web_search_preview tool")
             
             # Stream using Responses API
@@ -768,7 +704,7 @@ class OpenAIProvider:
             # Privacy features
             "privacy_features": {
                 "exif_stripping": True,  # We strip EXIF from images
-                "user_id_validation": True,  # We validate user_id is not raw PII
+                "no_user_id": True,  # No user identity sent to OpenAI
                 "filename_redaction": True,  # strip_metadata defaults to True
             },
             "backend": "platform",
@@ -834,14 +770,13 @@ def stream_openai(
     max_tokens: int = 4000,
     file_data: Optional[List[Dict[str, Any]]] = None,
     temperature: float = 1.0,
-    user_id: Optional[str] = None,
     web_search_enabled: bool = False,
 ) -> Generator[str, None, Dict[str, Any]]:
     """
     Stream an OpenAI response.
-    
+
     Convenience function that creates a provider and streams.
-    
+
     Args:
         message: User message
         model: Model name
@@ -849,12 +784,11 @@ def stream_openai(
         max_tokens: Maximum output tokens
         file_data: Optional file attachments
         temperature: Sampling temperature
-        user_id: Optional hashed user ID for privacy-preserving abuse monitoring
         web_search_enabled: Enable web search tool
-        
+
     Yields:
         Text chunks
-        
+
     Returns:
         Dict with 'citations' list when web search is enabled
     """
@@ -866,7 +800,6 @@ def stream_openai(
         max_tokens=max_tokens,
         file_data=file_data,
         temperature=temperature,
-        user_id=user_id,
         web_search_enabled=web_search_enabled,
     ))
 

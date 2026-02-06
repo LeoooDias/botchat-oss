@@ -157,57 +157,6 @@ def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
         return image_bytes
 
 
-# Patterns that indicate raw PII was passed as user_id (should be hashed)
-_PII_PATTERNS_FOR_USER_ID = [
-    (r"^[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}$", "email"),  # Email addresses
-    (r"^\d{3}-\d{2}-\d{4}$", "SSN"),  # US SSN
-    (r"^\d{9}$", "SSN"),  # US SSN without dashes
-    (r"^\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4}$", "phone"),  # US phone
-    (r"^\d{16}$", "credit_card"),  # Credit card (16 digits)
-    (r"^\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}$", "credit_card"),  # Credit card with separators
-]
-
-
-def _validate_user_id(user_id: Optional[str]) -> Optional[str]:
-    """
-    Validate user_id to ensure it's not raw PII.
-    
-    User IDs should be hashed/opaque identifiers, NOT raw PII like email addresses.
-    This function rejects obvious PII patterns and returns None (effectively
-    disabling user tracking for that request) while logging a warning.
-    
-    Args:
-        user_id: The user identifier to validate
-        
-    Returns:
-        The user_id if valid, None if it appears to be PII
-    """
-    import re
-    
-    if not user_id:
-        return None
-    
-    # Check for obvious PII patterns
-    for pattern, pii_type in _PII_PATTERNS_FOR_USER_ID:
-        if re.match(pattern, user_id.strip()):
-            logger.warning(
-                "user_id appears to be raw PII (%s pattern detected). "
-                "Please use hashed identifiers. Ignoring user_id for this request.",
-                pii_type
-            )
-            return None
-    
-    # Additional heuristic: reject if it looks like a name (has spaces and common name patterns)
-    if " " in user_id and len(user_id) < 50:
-        logger.warning(
-            "user_id appears to be a name (contains spaces). "
-            "Please use hashed identifiers. Ignoring user_id for this request."
-        )
-        return None
-    
-    return user_id
-
-
 @dataclass
 class AnthropicConfig:
     """Configuration for Anthropic requests."""
@@ -261,14 +210,13 @@ class AnthropicProvider:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         file_data: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 1.0,
-        user_id: Optional[str] = None,
         enable_prompt_caching: bool = False,
         pii_scrubber: Optional[Callable[[str], str]] = None,
         web_search_enabled: bool = False,
     ) -> Generator[str, None, Dict[str, Any]]:
         """
         Stream a response from Anthropic.
-        
+
         Args:
             message: User message
             model: Model name (e.g., "claude-sonnet-4-20250514")
@@ -276,9 +224,6 @@ class AnthropicProvider:
             max_tokens: Maximum output tokens
             file_data: Optional list of file attachments [{bytes, mime_type, name}]
             temperature: Sampling temperature (0.0-1.0)
-            user_id: Ephemeral session ID (UUID v4) for privacy-preserving rate limiting.
-                    PRIVACY: This is a per-request random UUID, NOT the user's identity.
-                    Allows provider to rate-limit without correlating across sessions.
             enable_prompt_caching: IGNORED (forced False for privacy). Parameter kept
                                   for API compatibility in case provider defaults change.
             pii_scrubber: Optional callback function to scrub PII from messages
@@ -308,10 +253,7 @@ class AnthropicProvider:
         
         # Build messages
         messages = self._build_messages(processed_message, model, file_data)
-        
-        # Validate user_id to ensure it's not raw PII
-        validated_user_id = _validate_user_id(user_id)
-        
+
         # Build request parameters
         request_params: Dict[str, Any] = {
             "model": model,
@@ -332,11 +274,9 @@ class AnthropicProvider:
             request_params["tools"] = web_search_tools
             logger.debug("Anthropic web search: enabled web_search_20250305 tool")
         
-        # Add validated user ID for privacy-preserving abuse monitoring
-        # This helps Anthropic with rate limiting and abuse detection without storing PII
-        if validated_user_id:
-            request_params["metadata"] = {"user_id": validated_user_id}
-        
+        # PRIVACY: No user_id / metadata sent — zero identity leakage to Anthropic.
+        # Our backend handles rate limiting via the credit system.
+
         # Add system instruction (using processed version if PII scrubber was applied)
         # PRIVACY: Prompt caching is DISABLED regardless of parameter value.
         # We keep the parameter for API compatibility and future-proofing, but
@@ -569,9 +509,8 @@ class AnthropicProvider:
                 "retention_days": 30,
             },
             "privacy_features": {
-                "user_id_support": True,  # Hashed user IDs for abuse monitoring
-                "user_id_validation": True,  # We validate user_id is not raw PII
-                "prompt_caching": "opt-in",  # Ephemeral caching available
+                "no_user_id": True,  # No user identity sent to Anthropic
+                "prompt_caching": "disabled",  # Explicitly disabled for privacy
                 "exif_stripping": True,  # We strip EXIF from images
                 "filename_redaction": True,  # strip_metadata defaults to True
             },
@@ -596,7 +535,6 @@ class AnthropicProvider:
             "privacy_level": "high",
             "transparency_note": "Anthropic has strong default privacy (no training on API data)",
             "recommendations": [
-                "Use hashed user IDs (not raw PII) for abuse monitoring",
                 "Enterprise customers can negotiate shorter retention periods",
             ],
         }
@@ -647,15 +585,14 @@ def stream_anthropic(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     file_data: Optional[List[Dict[str, Any]]] = None,
     temperature: float = 1.0,
-    user_id: Optional[str] = None,
     enable_prompt_caching: bool = False,
     web_search_enabled: bool = False,
 ) -> Generator[str, None, Dict[str, Any]]:
     """
     Stream an Anthropic response.
-    
+
     Convenience function that creates a provider and streams.
-    
+
     Args:
         message: User message
         model: Model name
@@ -663,13 +600,12 @@ def stream_anthropic(
         max_tokens: Maximum output tokens
         file_data: Optional file attachments
         temperature: Sampling temperature
-        user_id: Optional hashed user ID for privacy-preserving abuse monitoring
         enable_prompt_caching: IGNORED (forced False for privacy)
         web_search_enabled: Enable web search tool
-        
+
     Yields:
         Text chunks
-        
+
     Returns:
         Dict with 'citations' list when web search is enabled
     """
@@ -681,7 +617,6 @@ def stream_anthropic(
         max_tokens=max_tokens,
         file_data=file_data,
         temperature=temperature,
-        user_id=user_id,
         enable_prompt_caching=enable_prompt_caching,
         web_search_enabled=web_search_enabled,
     ))
