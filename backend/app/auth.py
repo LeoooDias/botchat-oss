@@ -42,7 +42,7 @@ from dataclasses import dataclass
 
 import httpx
 from jose import jwt, JWTError
-from fastapi import HTTPException, Header, Depends
+from fastapi import HTTPException, Header, Depends, Request, Response
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,17 @@ logger = logging.getLogger(__name__)
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_SECONDS = 3600  # 1 hour (security hardening: reduced from 7 days)
+
+# Auth cookie configuration (v3.10.0 - HttpOnly JWT cookie)
+AUTH_COOKIE_NAME = "__auth"
+AUTH_COOKIE_PATH = "/"
+AUTH_COOKIE_SAMESITE = "lax"
+
+# Domain mapping for cookie scoping (registrable domain for subdomain sharing)
+COOKIE_DOMAIN_MAP = {
+    "botchat.ca": ".botchat.ca",
+    "hushhush.ai": ".hushhush.ai",
+}
 
 # OAuth Client IDs/Secrets - Default (botchat)
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
@@ -480,6 +491,77 @@ def verify_jwt(token: str) -> UserInfo:
 
 
 # -----------------------------
+# Auth Cookie Helpers (v3.10.0)
+# -----------------------------
+
+def get_cookie_domain(request: Request) -> Optional[str]:
+    """Determine the cookie domain from the request host.
+
+    Returns the registrable domain (e.g., ".botchat.ca") so the cookie
+    is shared between app.botchat.ca and api.botchat.ca.
+    Returns None for localhost (browser defaults to exact host).
+    """
+    host = request.headers.get("host", "")
+    origin = request.headers.get("origin", "")
+
+    for domain_key, cookie_domain in COOKIE_DOMAIN_MAP.items():
+        if domain_key in host or domain_key in origin:
+            return cookie_domain
+
+    return None
+
+
+def set_auth_cookie(response: Response, token: str, request: Request) -> None:
+    """Set the __auth HttpOnly cookie on a response.
+
+    SECURITY PROPERTIES:
+    - HttpOnly: JavaScript cannot access (XSS protection)
+    - Secure: HTTPS only (disabled on localhost for dev)
+    - SameSite=Lax: Sent on same-site requests only (CSRF protection)
+    - Domain: scoped to registrable domain for subdomain sharing
+    - Max-Age: matches JWT expiry (1 hour)
+    """
+    cookie_domain = get_cookie_domain(request)
+    host = request.headers.get("host", "")
+    is_localhost = "localhost" in host or "127.0.0.1" in host
+
+    kwargs: dict[str, Any] = {
+        "key": AUTH_COOKIE_NAME,
+        "value": token,
+        "max_age": JWT_EXPIRY_SECONDS,
+        "path": AUTH_COOKIE_PATH,
+        "httponly": True,
+        "samesite": AUTH_COOKIE_SAMESITE,
+        "secure": not is_localhost,
+    }
+
+    if cookie_domain:
+        kwargs["domain"] = cookie_domain
+
+    response.set_cookie(**kwargs)
+
+
+def clear_auth_cookie(response: Response, request: Request) -> None:
+    """Clear the __auth cookie (for logout)."""
+    cookie_domain = get_cookie_domain(request)
+    host = request.headers.get("host", "")
+    is_localhost = "localhost" in host or "127.0.0.1" in host
+
+    kwargs: dict[str, Any] = {
+        "key": AUTH_COOKIE_NAME,
+        "path": AUTH_COOKIE_PATH,
+        "httponly": True,
+        "samesite": AUTH_COOKIE_SAMESITE,
+        "secure": not is_localhost,
+    }
+
+    if cookie_domain:
+        kwargs["domain"] = cookie_domain
+
+    response.delete_cookie(**kwargs)
+
+
+# -----------------------------
 # OAuth Token Exchange
 # -----------------------------
 
@@ -727,30 +809,40 @@ async def exchange_oauth_code(req: OAuthCallbackRequest) -> UserInfo:
 # -----------------------------
 
 async def get_current_user(
-    authorization: Optional[str] = Header(None)
+    request: Request,
+    authorization: Optional[str] = Header(None),
 ) -> Optional[UserInfo]:
-    """Extract and verify user from Authorization header.
-    
+    """Extract and verify user from auth cookie or Authorization header.
+
+    v3.10.0: Supports dual auth for seamless migration:
+    1. __auth HttpOnly cookie (new, XSS-immune)
+    2. Authorization: Bearer <token> header (legacy, backward compat)
+
     Returns None if:
     - Auth is disabled (REQUIRE_AUTH=false)
-    - No Authorization header provided
-    
+    - No cookie or Authorization header provided
+
     Raises HTTPException if token is provided but invalid.
-    
+
     Note: This function does NOT require auth - it just extracts the user if present.
     Use require_auth() dependency if auth is mandatory, or get_optional_user() if optional.
     """
     if not REQUIRE_AUTH:
         return None
-    
-    if not authorization:
-        # No auth header - return None (let downstream decide if auth is required)
+
+    # Try HttpOnly cookie first (new flow - XSS immune)
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+
+    # Fall back to Authorization header (legacy flow)
+    if not token:
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization[7:]
+        elif authorization:
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+
+    if not token:
         return None
-    
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization format")
-    
-    token = authorization[7:]  # Remove "Bearer " prefix
+
     return verify_jwt(token)
 
 
