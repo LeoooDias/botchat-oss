@@ -343,7 +343,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	}
 </script>
 
-<div bind:this={messagesContainer} class="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 mobile-scroll">
+<div bind:this={messagesContainer} role="log" aria-live="polite" aria-label="Chat messages" class="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 mobile-scroll">
 	{#if messages.length === 0}
 		<div class="h-full flex items-center justify-center text-center px-4">
 			<div>
@@ -360,7 +360,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		{#if group.type === 'user'}
 			<!-- User message - right aligned -->
 			{@const msg = group.messages[0]}
-			<div class="flex justify-end">
+			<div class="flex justify-end" aria-label="You said">
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="relative max-w-[90%] md:max-w-2xl group"
@@ -377,7 +377,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<button
 						on:click={() => copyMessageToClipboard(msg)}
 						class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
-						title="Copy to clipboard"
+						title="Copy to clipboard" aria-label="Copy to clipboard"
 					>
 						{#if copiedMessageId === msg.id}
 							<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -409,7 +409,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 				{#each group.messages as msg (msg.id)}
 					<!-- svelte-ignore a11y-no-static-element-interactions -->
 					<!-- Outer wrapper for column spacing only -->
-					<div class={useColumns ? 'break-inside-avoid md:pb-8' : ''}>
+					<div class={useColumns ? 'break-inside-avoid md:pb-8' : ''} aria-label="{getBotName(msg) || formatProviderName(msg.provider)} replied via {formatProviderName(msg.provider)}">
 						<!-- Inner wrapper for relative positioning of buttons -->
 						<!-- Study mode: full width for better table/content rendering -->
 						<!-- Non-study: constrain width for readability -->
@@ -480,7 +480,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 								<button
 									class="w-5 h-5 rounded-full bg-amber-500 hover:bg-amber-600 flex items-center justify-center text-sm shadow-lg hover:shadow-xl transition-all cursor-pointer text-white text-xs leading-none pb-0.5"
 									on:click={() => onRetry?.(msg)}
-									title="Retry this message"
+									title="Retry this message" aria-label="Retry this message"
 								>
 									↻
 								</button>
@@ -493,7 +493,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<button
 								on:click={() => dispatch('export', { message: msg })}
 								class="absolute -bottom-2 right-[4.5rem] w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
-								title="Export this message"
+								title="Export this message" aria-label="Export this message"
 							>
 								<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -503,7 +503,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<button
 								on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
 								class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
-								title="Reply to this bot only"
+								title="Reply to this bot only" aria-label="Reply to this bot only"
 							>
 								<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
@@ -513,7 +513,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<button
 								on:click={() => copyMessageToClipboard(msg)}
 								class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
-								title="Copy to clipboard"
+								title="Copy to clipboard" aria-label="Copy to clipboard"
 							>
 								{#if copiedMessageId === msg.id}
 									<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -542,7 +542,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	
 	<!-- Loading spinners for pending bots (waiting for first token) -->
 	{#each activeBots.filter(b => pendingBots.has(b.id)) as bot (bot.id)}
-		<div class="flex justify-start">
+		<div class="flex justify-start" role="status" aria-label="{bot.name || bot.model} is thinking">
 			<div class="max-w-[80%] p-3 rounded-2xl bg-gray-100 dark:bg-gray-700 rounded-bl-md">
 				<div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-2">
 					<span class="font-medium">{bot.name || bot.model}</span>
