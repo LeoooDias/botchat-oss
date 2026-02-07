@@ -667,10 +667,29 @@ async def _create_tables():
                 ON anonymous_usage(identity_hash);
             CREATE INDEX IF NOT EXISTS idx_anonymous_usage_action 
                 ON anonymous_usage(identity_hash, action_type);
-            CREATE INDEX IF NOT EXISTS idx_anonymous_usage_created 
+            CREATE INDEX IF NOT EXISTS idx_anonymous_usage_created
                 ON anonymous_usage(created_at);
+
+            -- Stripe webhook idempotency (v3.9.6: prevent duplicate event processing)
+            CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+                id SERIAL PRIMARY KEY,
+                event_id VARCHAR(255) UNIQUE NOT NULL,
+                event_type VARCHAR(100),
+                processed_at TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_created
+                ON stripe_webhook_events(processed_at);
         """)
-        
+
+        # Cleanup: remove webhook events older than 90 days
+        try:
+            await conn.execute(
+                "DELETE FROM stripe_webhook_events WHERE processed_at < NOW() - INTERVAL '90 days'"
+            )
+        except Exception:
+            pass  # Table may not exist yet on first run
+
         logger.info("Database tables and views created/verified")
 
 
