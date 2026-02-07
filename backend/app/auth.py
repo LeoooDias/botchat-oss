@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 # JWT Configuration
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_SECONDS = 604800  # 7 days (was 1 hour)
+JWT_EXPIRY_SECONDS = 3600  # 1 hour (security hardening: reduced from 7 days)
 
 # OAuth Client IDs/Secrets - Default (botchat)
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
@@ -391,6 +391,7 @@ class OAuthCallbackRequest(BaseModel):
     code: str
     provider: str  # "github", "google", or "apple"
     redirect_uri: str
+    state: Optional[str] = None  # v3.9.6: CSRF protection (required for github/google)
     id_token: Optional[str] = None  # Apple sends id_token via POST
     anonymous_fingerprint: Optional[str] = None  # v3.0.1: For merging anonymous usage
     referral_code: Optional[str] = None  # v3.9.0: Referral system
@@ -849,3 +850,51 @@ def get_apple_auth_url(redirect_uri: str, state: str = "") -> str:
     if state:
         params["state"] = state
     return f"https://appleid.apple.com/auth/authorize?{urlencode(params)}"
+
+
+# -----------------------------
+# OAuth State (CSRF Protection)
+# -----------------------------
+
+OAUTH_STATE_MAX_AGE = 600  # 10 minutes
+
+
+def generate_oauth_state() -> str:
+    """Generate a signed OAuth state token for CSRF protection.
+
+    The state is a stateless HMAC-signed token containing a nonce and timestamp.
+    This avoids needing server-side storage while preventing CSRF attacks.
+    The attacker cannot forge a valid state without JWT_SECRET.
+    """
+    import secrets as _secrets
+    nonce = _secrets.token_urlsafe(16)
+    timestamp = str(int(time.time()))
+    payload = f"{nonce}:{timestamp}"
+    signature = hmac.new(
+        JWT_SECRET.encode(), payload.encode(), hashlib.sha256
+    ).hexdigest()[:32]
+    return f"{payload}:{signature}"
+
+
+def verify_oauth_state(state: str) -> bool:
+    """Verify an OAuth state token. Returns True if valid and not expired."""
+    if not state or not JWT_SECRET:
+        return False
+    try:
+        parts = state.split(":")
+        if len(parts) != 3:
+            return False
+        nonce, timestamp, signature = parts
+        # Verify signature
+        payload = f"{nonce}:{timestamp}"
+        expected = hmac.new(
+            JWT_SECRET.encode(), payload.encode(), hashlib.sha256
+        ).hexdigest()[:32]
+        if not hmac.compare_digest(signature, expected):
+            return False
+        # Check expiry
+        if int(time.time()) - int(timestamp) > OAUTH_STATE_MAX_AGE:
+            return False
+        return True
+    except (ValueError, TypeError):
+        return False
