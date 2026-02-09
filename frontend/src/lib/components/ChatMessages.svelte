@@ -529,7 +529,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Delete button (two-click confirm) -->
 							<button
 								on:click={() => handleDeleteClick(msg.id)}
-								class="absolute -bottom-2 right-[7rem] w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-[6.5rem] w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
 								title={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'} aria-label={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'}
 							>
 								{#if deleteConfirmMessageId === msg.id}
