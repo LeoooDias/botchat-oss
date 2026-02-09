@@ -136,7 +136,7 @@ def _strip_exif_metadata(image_bytes: bytes, mime_type: str) -> bytes:
             img_rgb.save(output, format="JPEG", quality=95)
         elif mime_type == "image/png":
             clean_img = Image.new(img.mode, img.size)
-            clean_img.putdata(list(img.getdata()))
+            clean_img.putdata(list(img.get_flattened_data()))
             clean_img.save(output, format="PNG")
         elif mime_type == "image/webp":
             img.save(output, format="WEBP", quality=95)
