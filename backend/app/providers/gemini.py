@@ -305,6 +305,11 @@ class GeminiProvider:
             temperature=temperature,
             top_p=0.95,
             top_k=40,
+            # PRIVACY: Explicitly set cached_content=None to ensure we never use
+            # server-side cached content, even if SDK defaults change in the future.
+            # Implicit caching (automatic, transient, for billing only) cannot be
+            # disabled client-side, but explicit caching we can prevent.
+            cached_content=None,
             # Explicit safety settings - don't rely on defaults
             safety_settings=[
                 types.SafetySetting(
