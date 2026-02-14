@@ -41,7 +41,8 @@ from typing import Any, Optional, Tuple
 from dataclasses import dataclass
 
 import httpx
-from jose import jwt, JWTError
+import jwt
+from jwt.exceptions import InvalidTokenError as JWTError
 from fastapi import HTTPException, Header, Depends, Request, Response
 from pydantic import BaseModel
 
@@ -682,7 +683,7 @@ async def exchange_google_code(code: str, redirect_uri: str) -> UserInfo:
         
         # Step 2: Decode id_token to get user ID
         try:
-            claims = jwt.get_unverified_claims(id_token)
+            claims = jwt.decode(id_token, options={"verify_signature": False}, algorithms=["RS256", "HS256"])
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid Google id_token")
         
@@ -767,7 +768,7 @@ async def exchange_apple_code(code: str, redirect_uri: str, id_token: Optional[s
         
         # Decode id_token to get user ID
         try:
-            claims = jwt.get_unverified_claims(received_id_token)
+            claims = jwt.decode(received_id_token, options={"verify_signature": False}, algorithms=["RS256", "HS256"])
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid Apple id_token")
         
