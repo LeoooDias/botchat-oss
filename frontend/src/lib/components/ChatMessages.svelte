@@ -152,6 +152,13 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	let messagesContainer: HTMLDivElement;
 	let showCitationsPopup = false;
 	let selectedCitations: Citation[] = [];
+	let showScrollToBottom = false;
+
+	function handleScroll() {
+		if (!messagesContainer) return;
+		const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+		showScrollToBottom = scrollHeight - scrollTop - clientHeight > 200;
+	}
 
 	// Group consecutive assistant messages for side-by-side layout on desktop
 	$: groupedMessages = (() => {
@@ -364,7 +371,8 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 	}
 </script>
 
-<div bind:this={messagesContainer} role="log" aria-live="polite" aria-label="Chat messages" class="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 mobile-scroll">
+<div class="flex-1 relative">
+<div bind:this={messagesContainer} on:scroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages" class="absolute inset-0 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 mobile-scroll">
 	{#if messages.length === 0}
 		<div class="h-full flex items-center justify-center text-center px-4">
 			<div>
@@ -397,7 +405,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<!-- Delete button for user messages (two-click confirm) -->
 					<button
 						on:click={() => handleDeleteClick(msg.id)}
-						class="absolute -bottom-2 right-10 w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+						class="absolute -bottom-2 right-10 w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
 						title={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'} aria-label={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'}
 					>
 						{#if deleteConfirmMessageId === msg.id}
@@ -413,7 +421,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<!-- Copy button for user messages -->
 					<button
 						on:click={() => copyMessageToClipboard(msg)}
-						class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+						class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
 						title="Copy to clipboard" aria-label="Copy to clipboard"
 					>
 						{#if copiedMessageId === msg.id}
@@ -512,7 +520,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							{/if}
 						</div>
 
-						{#if msg.isError && onRetry}
+						{#if msg.isError && onRetry && msg.lastInputs}
 							<div class="absolute -top-2 -right-2">
 								<button
 									class="w-5 h-5 rounded-full bg-amber-500 hover:bg-amber-600 flex items-center justify-center text-sm shadow-lg hover:shadow-xl transition-all cursor-pointer text-white text-xs leading-none pb-0.5"
@@ -529,7 +537,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Delete button (two-click confirm) -->
 							<button
 								on:click={() => handleDeleteClick(msg.id)}
-								class="absolute -bottom-2 right-[6.5rem] w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-[6.5rem] w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
 								title={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'} aria-label={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'}
 							>
 								{#if deleteConfirmMessageId === msg.id}
@@ -545,7 +553,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Export button -->
 							<button
 								on:click={() => dispatch('export', { message: msg })}
-								class="absolute -bottom-2 right-[4.5rem] w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-[4.5rem] w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
 								title="Export this message" aria-label="Export this message"
 							>
 								<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
@@ -555,7 +563,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Reply button -->
 							<button
 								on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
-								class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
 								title="Reply to this bot only" aria-label="Reply to this bot only"
 							>
 								<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -565,7 +573,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Copy button -->
 							<button
 								on:click={() => copyMessageToClipboard(msg)}
-								class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
 								title="Copy to clipboard" aria-label="Copy to clipboard"
 							>
 								{#if copiedMessageId === msg.id}
@@ -621,6 +629,18 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 			</div>
 		</div>
 	{/each}
+</div>
+{#if showScrollToBottom}
+	<button
+		on:click={scrollToBottom}
+		class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 p-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full shadow-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition"
+		aria-label="Scroll to bottom"
+	>
+		<svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+		</svg>
+	</button>
+{/if}
 </div>
 
 <!-- Citations Popup -->
