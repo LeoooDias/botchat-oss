@@ -1495,7 +1495,8 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
             "required": amount,
         }
     
-    # Deduct credits
+    # Deduct credits atomically: check balance AND deduct in single UPDATE
+    # Prevents TOCTOU race where two concurrent requests both pass the balance check
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -1504,11 +1505,12 @@ async def spend_credits(provider: str, oauth_id: str, amount: int = 1) -> Option
                 credits_spent_total = COALESCE(credits_spent_total, 0) + $3,
                 updated_at = NOW()
             WHERE oauth_provider = $1 AND oauth_id = $2
+              AND credit_balance >= $3
             RETURNING credit_balance, credits_spent_total
             """,
             provider, oauth_id, amount
         )
-    
+
     if not row:
         return None
     
@@ -1708,33 +1710,25 @@ async def deduct_credits(provider: str, oauth_id: str, amount: int = 1) -> Optio
         return None
     
     async with _pool.acquire() as conn:
-        # First check if user has enough credits
-        row = await conn.fetchrow(
-            """
-            SELECT credit_balance FROM users
-            WHERE oauth_provider = $1 AND oauth_id = $2
-            """,
-            provider, oauth_id
-        )
-        
-        if not row or (row['credit_balance'] or 0) < amount:
-            logger.warning("Insufficient credits for %s:%s... (balance: %d, requested: %d)",
-                         provider, oauth_id[:16], row['credit_balance'] if row else 0, amount)
-            return None
-        
-        # Deduct credits
+        # Atomic check-and-deduct: prevents TOCTOU race condition
         row = await conn.fetchrow(
             """
             UPDATE users
             SET credit_balance = credit_balance - $3,
                 updated_at = NOW()
             WHERE oauth_provider = $1 AND oauth_id = $2
+              AND credit_balance >= $3
             RETURNING id, credit_balance
             """,
             provider, oauth_id, amount
         )
-        
-        return dict(row) if row else None
+
+        if not row:
+            logger.warning("Insufficient credits or user not found for %s:%s... (requested: %d)",
+                         provider, oauth_id[:16], amount)
+            return None
+
+        return dict(row)
 
 
 async def get_user_quota_with_credits(
