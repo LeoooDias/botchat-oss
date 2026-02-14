@@ -44,9 +44,14 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		return rect.bottom > viewportHeight - 250;
 	}
 
-	function handleMessageInteraction(event: Event, messageElement: HTMLElement) {
+	function handleMessageInteraction(event: Event, messageElement: HTMLElement, msgId?: string) {
 		// Only care about mobile
 		if (window.innerWidth >= 768) return;
+
+		// Show action buttons for this message on tap
+		if (msgId && event.type === 'touchstart') {
+			handleMessageTap(msgId);
+		}
 
 		// Clear any pending reset
 		if (dodgeResetTimeout) {
@@ -73,6 +78,30 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 				dodgeResetTimeout = null;
 			}, 2000);
 		}
+	}
+
+	// Track which message has its action buttons visible on mobile (tap-to-show)
+	let tappedMessageId: string | null = null;
+	let tappedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	function handleMessageTap(msgId: string) {
+		// Only on mobile
+		if (window.innerWidth >= 768) return;
+		if (tappedTimeout) clearTimeout(tappedTimeout);
+		// Toggle: tap same message to hide, different message to switch
+		tappedMessageId = tappedMessageId === msgId ? null : msgId;
+		if (tappedMessageId) {
+			// Auto-hide after 4 seconds
+			tappedTimeout = setTimeout(() => {
+				tappedMessageId = null;
+				tappedTimeout = null;
+			}, 4000);
+		}
+	}
+
+	// Action button visibility: hidden by default, tap-to-show on mobile, hover on desktop
+	function actionVis(msgId: string): string {
+		return (tappedMessageId === msgId ? '' : 'opacity-0') + ' md:opacity-0 md:group-hover:opacity-100 focus:opacity-100';
 	}
 
 	// Track which message is showing "Copied!" tooltip
@@ -393,7 +422,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="relative max-w-[90%] md:max-w-2xl group"
-					on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget)}
+					on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget, msg.id)}
 					on:mouseenter={(e) => handleMessageInteraction(e, e.currentTarget)}
 					on:mouseleave={handleMessageLeave}
 					on:touchend={handleMessageLeave}
@@ -405,7 +434,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<!-- Delete button for user messages (two-click confirm) -->
 					<button
 						on:click={() => handleDeleteClick(msg.id)}
-						class="absolute -bottom-2 right-10 w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+						class="absolute -bottom-2 right-10 w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm {actionVis(msg.id)}"
 						title={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'} aria-label={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'}
 					>
 						{#if deleteConfirmMessageId === msg.id}
@@ -421,7 +450,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 					<!-- Copy button for user messages -->
 					<button
 						on:click={() => copyMessageToClipboard(msg)}
-						class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+						class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm {actionVis(msg.id)}"
 						title="Copy to clipboard" aria-label="Copy to clipboard"
 					>
 						{#if copiedMessageId === msg.id}
@@ -460,7 +489,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 						<!-- Non-study: constrain width for readability -->
 						<div
 							class={`relative group ${useColumns ? '' : msg.mode === 'study' ? '' : 'max-w-[90%] md:max-w-2xl'}`}
-							on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget)}
+							on:touchstart={(e) => handleMessageInteraction(e, e.currentTarget, msg.id)}
 							on:mouseenter={(e) => handleMessageInteraction(e, e.currentTarget)}
 							on:mouseleave={handleMessageLeave}
 							on:touchend={handleMessageLeave}
@@ -537,7 +566,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Delete button (two-click confirm) -->
 							<button
 								on:click={() => handleDeleteClick(msg.id)}
-								class="absolute -bottom-2 right-[6.5rem] w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-[6.5rem] w-6 h-6 rounded-full {deleteConfirmMessageId === msg.id ? 'bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-600' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} border flex items-center justify-center hover:bg-red-200 dark:hover:bg-red-800/50 hover:border-red-400 dark:hover:border-red-500 transition shadow-sm {actionVis(msg.id)}"
 								title={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'} aria-label={deleteConfirmMessageId === msg.id ? 'Click again to delete' : 'Delete message'}
 							>
 								{#if deleteConfirmMessageId === msg.id}
@@ -553,7 +582,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Export button -->
 							<button
 								on:click={() => dispatch('export', { message: msg })}
-								class="absolute -bottom-2 right-[4.5rem] w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-[4.5rem] w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm {actionVis(msg.id)}"
 								title="Export this message" aria-label="Export this message"
 							>
 								<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
@@ -563,7 +592,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Reply button -->
 							<button
 								on:click={() => dispatch('reply', { messageId: msg.id, botId: msg.botId || '' })}
-								class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-10 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm {actionVis(msg.id)}"
 								title="Reply to this bot only" aria-label="Reply to this bot only"
 							>
 								<svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -573,7 +602,7 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 							<!-- Copy button -->
 							<button
 								on:click={() => copyMessageToClipboard(msg)}
-								class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+								class="absolute -bottom-2 right-2 w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition shadow-sm {actionVis(msg.id)}"
 								title="Copy to clipboard" aria-label="Copy to clipboard"
 							>
 								{#if copiedMessageId === msg.id}
