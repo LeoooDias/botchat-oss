@@ -70,13 +70,21 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 		// Only care about mobile
 		if (window.innerWidth >= 768) return;
 
+		// Don't reset dodge while action buttons are still visible
+		// The dodge will be cleared when tappedMessageId becomes null (see clearDodge)
+		if (actionsNearBottom && !tappedMessageId) {
+			clearDodge();
+		}
+	}
+
+	function clearDodge() {
 		if (actionsNearBottom) {
-			// Delay reset to give user time to tap the action buttons
-			dodgeResetTimeout = setTimeout(() => {
-				actionsNearBottom = false;
-				dispatch('actionsNearBottom', { visible: false });
-				dodgeResetTimeout = null;
-			}, 2000);
+			actionsNearBottom = false;
+			dispatch('actionsNearBottom', { visible: false });
+		}
+		if (dodgeResetTimeout) {
+			clearTimeout(dodgeResetTimeout);
+			dodgeResetTimeout = null;
 		}
 	}
 
@@ -95,7 +103,12 @@ Purpose: Demonstrate localStorage-only message storage (no server persistence)
 			tappedTimeout = setTimeout(() => {
 				tappedMessageId = null;
 				tappedTimeout = null;
+				// Action buttons gone — now safe to reset dodge
+				clearDodge();
 			}, 4000);
+		} else {
+			// Tapped same message to dismiss — reset dodge immediately
+			clearDodge();
 		}
 	}
 
