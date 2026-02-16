@@ -591,6 +591,7 @@ async def _create_tables():
                 unique_sessions INT DEFAULT 0,
                 signups_started INT DEFAULT 0,
                 signups_completed INT DEFAULT 0,
+                signins_completed INT DEFAULT 0,
                 first_chat_created INT DEFAULT 0,
                 first_message_sent INT DEFAULT 0,
                 multi_model_response INT DEFAULT 0,
