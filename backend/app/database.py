@@ -385,44 +385,6 @@ async def _create_tables():
             END $$;
         """)
         
-        # TRANSPARENCY VIEW: Pre-masked view of users table
-        # This view shows the COMPLETE schema of what we store, with values masked for privacy
-        # If using a restricted role (transparency_reader), they only have SELECT on this view
-        # NOTE: Using CREATE OR REPLACE for atomic, race-condition-safe view creation.
-        # If you need to remove columns from the view, you must DROP first (manually).
-        await conn.execute("""
-            CREATE OR REPLACE VIEW transparency_users AS
-            SELECT
-                -- Core identity (masked)
-                '•••' as id,
-                oauth_provider,
-                LEFT(oauth_id, 8) || '...' as oauth_id,
-                -- Stripe billing (masked)
-                CASE WHEN stripe_customer_id IS NOT NULL THEN 'cus_•••••' ELSE NULL END as stripe_customer_id,
-                '•••' as subscription_status,
-                CASE WHEN subscription_id IS NOT NULL THEN 'sub_•••••' ELSE NULL END as subscription_id,
-                CASE WHEN subscription_ends_at IS NOT NULL THEN '•••' ELSE NULL END as subscription_ends_at,
-                subscription_tier,
-                -- Credit system (v3.2.2) - show structure, mask values
-                '•••' as credit_balance,
-                '•••' as credit_cap,
-                CASE WHEN last_credit_refresh IS NOT NULL THEN '•••' ELSE NULL END as last_credit_refresh,
-                '•••' as credits_earned_total,
-                '•••' as credits_spent_total,
-                -- Anonymous user tracking (v3.0.1) - show structure, mask values
-                is_anonymous,
-                CASE WHEN anonymous_fingerprint IS NOT NULL THEN LEFT(anonymous_fingerprint, 8) || '...' ELSE NULL END as anonymous_fingerprint,
-                CASE WHEN promoted_at IS NOT NULL THEN '•••' ELSE NULL END as promoted_at,
-                -- Recovery email (masked)
-                CASE WHEN recovery_email_hash IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_hash,
-                CASE WHEN recovery_email_set_at IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_set_at,
-                -- Timestamps and status (masked)
-                '•••' as created_at,
-                '•••' as updated_at,
-                account_status
-            FROM users;
-        """)
-        
         # ACCOUNT STATUS: Add account_status column to users table
         # Tracks: 'active' (default), 'suspended' (pending review), 'deleted'
         await conn.execute("""
@@ -450,6 +412,20 @@ async def _create_tables():
             UPDATE users SET subscription_tier = 'plus'
             WHERE subscription_status IN ('active', 'trialing')
             AND subscription_tier IS NULL;
+        """)
+
+        # V3.2.2: CREDIT SYSTEM columns
+        await conn.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS credit_balance INT DEFAULT 0;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS credit_cap INT DEFAULT 0;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS last_credit_refresh TIMESTAMP;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS credits_earned_total INT DEFAULT 0;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS credits_spent_total INT DEFAULT 0;
+        """)
+
+        # BRAND column for multi-brand identity separation
+        await conn.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS brand VARCHAR(20) DEFAULT 'botchat';
         """)
 
         # V3.0.1: ANONYMOUS USER TRACKING: Server-side quota enforcement
@@ -533,7 +509,47 @@ async def _create_tables():
                 ON users(promoted_at)
                 WHERE anonymous_fingerprint IS NOT NULL AND is_anonymous = FALSE;
         """)
-        
+
+        # TRANSPARENCY VIEW: Pre-masked view of users table
+        # This view shows the COMPLETE schema of what we store, with values masked for privacy
+        # If using a restricted role (transparency_reader), they only have SELECT on this view
+        # NOTE: Using CREATE OR REPLACE for atomic, race-condition-safe view creation.
+        # If you need to remove columns from the view, you must DROP first (manually).
+        # IMPORTANT: This must come AFTER all ALTER TABLE ADD COLUMN statements above,
+        # otherwise the view references columns that don't exist yet on a fresh database.
+        await conn.execute("""
+            CREATE OR REPLACE VIEW transparency_users AS
+            SELECT
+                -- Core identity (masked)
+                '•••' as id,
+                oauth_provider,
+                LEFT(oauth_id, 8) || '...' as oauth_id,
+                -- Stripe billing (masked)
+                CASE WHEN stripe_customer_id IS NOT NULL THEN 'cus_•••••' ELSE NULL END as stripe_customer_id,
+                '•••' as subscription_status,
+                CASE WHEN subscription_id IS NOT NULL THEN 'sub_•••••' ELSE NULL END as subscription_id,
+                CASE WHEN subscription_ends_at IS NOT NULL THEN '•••' ELSE NULL END as subscription_ends_at,
+                subscription_tier,
+                -- Credit system (v3.2.2) - show structure, mask values
+                '•••' as credit_balance,
+                '•••' as credit_cap,
+                CASE WHEN last_credit_refresh IS NOT NULL THEN '•••' ELSE NULL END as last_credit_refresh,
+                '•••' as credits_earned_total,
+                '•••' as credits_spent_total,
+                -- Anonymous user tracking (v3.0.1) - show structure, mask values
+                is_anonymous,
+                CASE WHEN anonymous_fingerprint IS NOT NULL THEN LEFT(anonymous_fingerprint, 8) || '...' ELSE NULL END as anonymous_fingerprint,
+                CASE WHEN promoted_at IS NOT NULL THEN '•••' ELSE NULL END as promoted_at,
+                -- Recovery email (masked)
+                CASE WHEN recovery_email_hash IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_hash,
+                CASE WHEN recovery_email_set_at IS NOT NULL THEN '•••' ELSE NULL END as recovery_email_set_at,
+                -- Timestamps and status (masked)
+                '•••' as created_at,
+                '•••' as updated_at,
+                account_status
+            FROM users;
+        """)
+
         # STRIKES TABLE: Tracks abuse incidents for admin review
         # Each strike auto-suspends the account pending admin decision
         await conn.execute("""
