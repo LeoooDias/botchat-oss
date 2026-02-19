@@ -985,11 +985,12 @@ async def create_user(provider: str, oauth_id: str, email: Optional[str] = None,
         return result
 
 
-async def get_or_create_anonymous_user(fingerprint: str) -> dict:
+async def get_or_create_anonymous_user(fingerprint: str, initial_credits: Optional[int] = None) -> dict:
     """Get or create an anonymous user by browser fingerprint hash.
 
     V3.0.1: Server-side quota enforcement for anonymous users.
-    V3.2.2: Initialize with credit_balance system (10 credits cap).
+    V3.2.2: Initialize with credit_balance system.
+    V3.18.0: Optional initial_credits override for campaign users.
 
     PRIVACY: fingerprint is a client-generated SHA-256 hash.
     We cannot reverse it to identify the user.
@@ -1035,6 +1036,9 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
             return dict(row)
 
         # Create new anonymous user with credit_balance initialized
+        # V3.18.0: Campaign users may get more initial credits
+        credits = initial_credits if initial_credits is not None else ANONYMOUS_CREDIT_CAP
+        cap = max(credits, ANONYMOUS_CREDIT_CAP)
         row = await conn.fetchrow(
             """
             INSERT INTO users (
@@ -1047,7 +1051,7 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
                 last_credit_refresh,
                 credits_earned_total
             )
-            VALUES ('anonymous', $1, TRUE, $1, $2, $2, NOW(), $2)
+            VALUES ('anonymous', $1, TRUE, $1, $2, $3, NOW(), $2)
             RETURNING id, oauth_provider, oauth_id,
                       is_anonymous, anonymous_fingerprint,
                       subscription_status, subscription_tier,
@@ -1055,10 +1059,11 @@ async def get_or_create_anonymous_user(fingerprint: str) -> dict:
                       created_at, updated_at, account_status
             """,
             fingerprint,
-            ANONYMOUS_CREDIT_CAP  # 10 credits
+            credits,
+            cap,
         )
 
-        logger.info(f"Created anonymous user: fingerprint={fingerprint[:16]}... (db_id={row['id']}, credits={ANONYMOUS_CREDIT_CAP})")
+        logger.info(f"Created anonymous user: fingerprint={fingerprint[:16]}... (db_id={row['id']}, credits={credits})")
         return dict(row)
 
 
@@ -1347,33 +1352,41 @@ async def apply_weekly_credit_refresh(conn, user: dict) -> int:
     return user.get('credit_balance', 0)
 
 
-async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = None) -> dict:
+async def get_user_quota(provider: str, oauth_id: str, email: Optional[str] = None, *, campaign_credits: Optional[int] = None) -> dict:
     """Get user's credit balance status.
-    
+
     V3.2.2: Simplified credit balance system.
+    V3.18.0: campaign_credits override for campaign-sourced anonymous users.
     - Returns credit_balance directly (no used/limit calculation)
     - Applies weekly refresh for free users if 7+ days passed
     - Paid users get monthly credits via Stripe webhook
-    
+
     Returns:
     - credit_balance: current available credits
     - credit_cap: maximum credits user can accumulate
     - is_paid: whether user has paid subscription
     - tier: subscription tier ('pro', 'plus', or None)
-    
+
     Legacy fields (for backward compatibility during transition):
     - used: 0 (deprecated)
     - limit: credit_cap (deprecated)
     - remaining: credit_balance (deprecated)
     """
     user = await get_user_for_billing(provider, oauth_id, email)
-    
+
     is_anonymous = provider == 'anonymous'
-    
+
     if not user:
-        # New user - return initial credits based on type
-        initial_credits = ANONYMOUS_INITIAL_CREDITS if is_anonymous else FREE_SIGNED_IN_INITIAL_CREDITS
-        credit_cap = ANONYMOUS_CREDIT_CAP if is_anonymous else FREE_SIGNED_IN_CREDIT_CAP
+        # V3.18.0: Campaign can override anonymous initial credits.
+        # Eagerly create the DB user so credits are consistent with what we report.
+        if is_anonymous and campaign_credits is not None:
+            user = await get_or_create_anonymous_user(oauth_id, initial_credits=campaign_credits)
+            initial_credits = user.get('credit_balance', campaign_credits)
+            credit_cap = user.get('credit_cap', max(campaign_credits, ANONYMOUS_CREDIT_CAP))
+        else:
+            # New user - return initial credits based on type (user created on first message)
+            initial_credits = ANONYMOUS_INITIAL_CREDITS if is_anonymous else FREE_SIGNED_IN_INITIAL_CREDITS
+            credit_cap = ANONYMOUS_CREDIT_CAP if is_anonymous else FREE_SIGNED_IN_CREDIT_CAP
         return {
             "credit_balance": initial_credits,
             "credit_cap": credit_cap,
